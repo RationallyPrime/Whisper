@@ -1,0 +1,10 @@
+output_processed.wav
+conversation_summaries.json
+anthropic_export.json
+.env
+.cursorignore
+*.log
+*.txt
+*.json
+*.csv
+*.md

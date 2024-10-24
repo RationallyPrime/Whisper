@@ -4,95 +4,170 @@ import numpy as np
 import queue
 import warnings
 import soundfile as sf
-import pyperclip  # For copying transcription result to clipboard
-from pynput import keyboard  # For listening to keyboard events
-import threading  # For running the recording in a separate thread
+import pyperclip
+from pynput import keyboard
+import threading
+import torch
+from typing import Optional
+from dataclasses import dataclass
+from pathlib import Path
+import logging
+import os
 
-warnings.filterwarnings("ignore", category=FutureWarning)
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 
-# Load the Whisper model (using 'base', 'small', 'medium', or 'large')
-model = whisper.load_model("turbo", device="cuda")  # For GPU optimization with float16 precision
-print(model.device)
+output_dir = Path.home() / ".whisper_tmp"  # Hidden directory for temp files
+output_dir.mkdir(exist_ok=True)
 
-# Global variables
-is_recording = False
-audio_queue = queue.Queue()
-samplerate = 16000
-recording_data = []
-recording_thread = None  # We'll store the recording thread here
+model_cache_dir = Path.home() / ".whisper_cache"
+os.environ["WHISPER_CACHE_DIR"] = str(model_cache_dir)
 
-# Callback function for sounddevice input stream
-def audio_callback(indata, frames, time, status):
-    """Callback function to store audio data in real-time."""
-    if status:
-        print(status)
-    audio_queue.put(indata.copy())
+@dataclass
+class AudioConfig:
+    """Audio configuration settings"""
+    samplerate: int = 16000
+    channels: int = 1
+    dtype: np.dtype = np.float32
+    device: Optional[int] = None
+    blocksize: int = 1024 * 4
 
-def record_audio():
-    """Record audio in real-time in a separate thread."""
-    global recording_data
-    recording_data = []  # Reset the recorded data
-    print("Recording started...")
+class WhisperTranscriber:
+    def __init__(self, model_name: str = "base", device: str = "cuda"):
+        self.config = AudioConfig()
+        self.is_recording = False
+        self.audio_queue = queue.Queue()
+        self.recording_data = []
+        self.recording_thread: Optional[threading.Thread] = None
+        
+        # Ensure CUDA is available if requested
+        if device == "cuda" and not torch.cuda.is_available():
+            logging.warning("CUDA not available, falling back to CPU")
+            device = "cpu"
+        
+        try:
+            self.model = whisper.load_model(model_name, device=device)
+            logging.info(f"Model loaded on device: {self.model.device}")
+        except Exception as e:
+            print(f"Failed to load model: {e}")
+            raise
 
-    # Start the input stream and store audio data
-    with sd.InputStream(samplerate=samplerate, channels=1, callback=audio_callback):
-        while is_recording:  # Keep capturing audio until stopped
-            audio_data = []
-            while not audio_queue.empty():
-                audio_data.append(audio_queue.get())
-            if audio_data:
-                recording_data.append(np.concatenate(audio_data, axis=0))
+    def audio_callback(self, indata: np.ndarray, frames: int, time: sd.CallbackFlags, status: sd.CallbackFlags) -> None:
+        """Process audio input in real-time"""
+        if status:
+            logging.warning(f"Audio callback status: {status}")
+        self.audio_queue.put(indata.copy())
 
-    print("Recording thread finished.")
+    def record_audio(self) -> None:
+        """Record audio in a separate thread"""
+        self.recording_data.clear()
+        logging.info("Recording started...")
 
-def start_recording():
-    """Start the recording process in a new thread."""
-    global is_recording, recording_thread
-    is_recording = True
-    recording_thread = threading.Thread(target=record_audio)
-    recording_thread.start()
+        try:
+            with sd.InputStream(
+                samplerate=self.config.samplerate,
+                channels=self.config.channels,
+                dtype=self.config.dtype,
+                blocksize=self.config.blocksize,
+                callback=self.audio_callback
+            ):
+                while self.is_recording:
+                    audio_chunks = []
+                    # Process all available chunks
+                    try:
+                        while not self.audio_queue.empty():
+                            audio_chunks.append(self.audio_queue.get_nowait())
+                    except queue.Empty:
+                        pass
+                    
+                    if audio_chunks:
+                        self.recording_data.append(np.concatenate(audio_chunks))
+        except Exception as e:
+            logging.error(f"Recording error: {e}")
+            self.is_recording = False
 
-def stop_recording():
-    """Stop recording and save the audio file."""
-    global is_recording, recording_data
-    is_recording = False  # Signal the recording thread to stop
-    recording_thread.join()  # Wait for the recording thread to finish
-    print("Recording stopped.")
+    def transcribe_audio(self, audio_path: Path) -> dict:
+        """Transcribe audio file using Whisper"""
+        try:
+            with torch.inference_mode():
+                result = self.model.transcribe(
+                    str(audio_path),
+                    fp16=torch.cuda.is_available(),
+                    language='en',
+                    task='transcribe'
+                )
+            return result
+        except Exception as e:
+            logging.error(f"Transcription error: {e}")
+            return {"text": "Transcription failed"}
 
-    # Combine recorded audio data
-    if recording_data:
-        full_audio = np.concatenate(recording_data)
-        sf.write('output.wav', full_audio, samplerate)  # Save to file
+    def start_recording(self) -> None:
+        """Start recording in a new thread"""
+        if not self.is_recording:
+            self.is_recording = True
+            self.recording_thread = threading.Thread(target=self.record_audio)
+            self.recording_thread.start()
+            logging.info("Recording started")
+            print("\a")  # System beep
 
-        # Transcribe the recorded audio
-        print("Transcribing...")
-        result = model.transcribe('output.wav', fp16=False, verbose=True, task='transcribe')
-        print(f"Transcribed Text: {result['text']}")
-        print(f"Full Transcription Result: {result}")
+    def stop_recording(self) -> None:
+        """Stop recording and transcribe"""
+        if self.is_recording:
+            self.is_recording = False
+            self.recording_thread.join()
+            
+            if not self.recording_data:
+                logging.warning("No audio data recorded")
+                return
 
-        # Copy the transcribed text to the clipboard
-        pyperclip.copy(result['text'])
-        print("Transcribed text copied to clipboard!")
+            output_path = Path("output.wav")
+            try:
+                full_audio = np.concatenate(self.recording_data)
+                sf.write(output_path, full_audio, self.config.samplerate)
+                
+                result = self.transcribe_audio(output_path)
+                transcribed_text = result.get('text', '').strip()
+                
+                if transcribed_text:
+                    pyperclip.copy(transcribed_text)
+                    logging.info(f"Transcribed: {transcribed_text}")
+                    logging.info("Text copied to clipboard")
+                else:
+                    logging.warning("No text transcribed")
+                    
+            except Exception as e:
+                logging.error(f"Processing error: {e}")
+            finally:
+                # Cleanup
+                if output_path.exists():
+                    output_path.unlink()
+            print("\a")  # System beep
 
-def on_press(key):
-    """Callback for key press event."""
-    try:
-        if key == keyboard.Key.f12:  # Use F12 to start recording
-            if not is_recording:
-                start_recording()
-        elif key == keyboard.Key.f11:  # Use F11 to stop recording
-            if is_recording:
-                stop_recording()
-    except AttributeError:
-        pass
+    def on_press(self, key: keyboard.Key) -> None:
+        """Handle keyboard events"""
+        try:
+            if key == keyboard.Key.f12 and not self.is_recording:
+                self.start_recording()
+            elif key == keyboard.Key.f11 and self.is_recording:
+                self.stop_recording()
+        except Exception as e:
+            logging.error(f"Keyboard handling error: {e}")
 
-def transcribe_real_time():
-    """Waits for key press to start/stop recording and transcribes in real-time."""
-    print("Press 'F12' to start recording, 'F11' to stop recording, 'Ctrl+C' to exit.")
-    
-    # Listen for key presses
-    with keyboard.Listener(on_press=on_press) as listener:
-        listener.join()
+    def run(self) -> None:
+        """Main execution loop"""
+        logging.info("Press 'F12' to start recording, 'F11' to stop recording, 'Ctrl+C' to exit")
+        
+        with keyboard.Listener(on_press=self.on_press) as listener:
+            try:
+                listener.join()
+            except KeyboardInterrupt:
+                logging.info("Shutting down...")
+                if self.is_recording:
+                    self.stop_recording()
 
 if __name__ == "__main__":
-    transcribe_real_time()
+    transcriber = WhisperTranscriber(model_name="turbo", device="cuda")
+    transcriber.run()
