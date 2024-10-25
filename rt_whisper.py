@@ -18,11 +18,27 @@ from anthropic import AsyncAnthropic
 import asyncio
 import json
 from TTS.api import TTS
+import transformers
 
-# Configure logging
+# Silence all warnings and unnecessary logs
+warnings.filterwarnings("ignore", category=UserWarning)  # Suppress audioread warning
+warnings.filterwarnings("ignore", category=FutureWarning)  # Suppress torch.load warning
+warnings.filterwarnings("ignore")  # Suppress all warnings
+transformers.logging.set_verbosity_error()  # Suppress transformer warnings
+logging.getLogger("TTS.utils.synthesizer").setLevel(logging.ERROR)  # Suppress TTS info messages
+logging.getLogger("transformers.generation.utils").setLevel(logging.ERROR)  # Suppress attention mask warning
+logging.getLogger("torch.distributed.distributed_c10d").setLevel(logging.ERROR)  # Suppress torch distributed warnings
+logging.getLogger("numba").setLevel(logging.ERROR)  # Suppress numba warnings
+logging.getLogger("matplotlib").setLevel(logging.ERROR)  # Suppress matplotlib warnings
+
+# Configure logging for our app
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(Path.home() / ".whisper_logs" / "whisper.log"),
+        logging.StreamHandler()
+    ]
 )
 
 # Directory setup
@@ -34,24 +50,30 @@ os.environ["WHISPER_CACHE_DIR"] = str(model_cache_dir)
 
 @dataclass
 class AudioConfig:
-    """Audio configuration settings"""
-    samplerate: int = 16000
+    """Audio configuration settings for recording"""
+    samplerate: int = 44100  # Increased from 16000
     channels: int = 1
     dtype: np.dtype = np.float32
     device: Optional[int] = None
-    blocksize: int = 1024 * 4
+    blocksize: int = 2048 * 4  # Increased buffer size
 
 @dataclass
 class TTSConfig:
     """Modern TTS configuration settings"""
     model_dir: Path = Path.home() / ".tts_models"
     output_dir: Path = Path.home() / ".tts_output"
-    model_name: str = "tts_models/en/vctk/vits"
-    sample_rate: int = 22050
-    speaker_id: str = "p273"  # Added default speaker ID
-    #language: str = "en"
+    log_dir: Path = Path.home() / ".whisper_logs"
+    temp_dir: Path = Path.home() / ".whisper_tmp"
+    model_name: str = "tts_models/multilingual/multi-dataset/xtts_v2"
+    sample_rate: int = 44100  # Increased from 22050
+    reference_audio: Path = Path.home() / ".voice_references" / "Rupert_Degas_20_15.wav"
+    language: str = "en"
+    audio_quality: str = "high"  # Can be 'low', 'medium', 'high'
 
-
+    def __post_init__(self):
+        """Ensure all directories exist"""
+        for dir_path in [self.model_dir, self.output_dir, self.log_dir, self.temp_dir]:
+            dir_path.mkdir(exist_ok=True)
 
 class TTSEngine:
     """Modern Text-to-Speech engine using Coqui TTS"""
@@ -77,12 +99,18 @@ class TTSEngine:
             output_path = self.config.output_dir / f"speech_{hash(text)}.wav"
         
         try:
-            # Generate speech
+            # Generate speech using XTTS with optimized settings
             self.tts.tts_to_file(
                 text=text,
                 file_path=str(output_path),
-                speaker=self.config.speaker_id,  # Make sure this line is present
-                #language=self.config.language
+                speaker_wav=str(self.config.reference_audio),
+                language=self.config.language,
+                split_sentences=True,     # Better phrasing
+                temperature=0.7,          # Controls variability (0.5-0.8 is good)
+                length_penalty=1.0,       # Helps with pacing
+                repetition_penalty=2.0,   # Reduces repetitive patterns
+                top_k=50,                # More natural prosody
+                enable_text_splitting=True  # Better handling of long texts
             )
             return output_path
         except Exception as e:
@@ -99,7 +127,7 @@ class ClaudeClient:
         """Get response from Claude for the given text"""
         try:
             response = await self.client.messages.create(
-                model="claude-3-sonnet-20240229",
+                model="claude-3-5-sonnet-20241022",
                 max_tokens=1024,
                 messages=[{
                     "role": "user",
@@ -112,9 +140,24 @@ class ClaudeClient:
             return f"Sorry, I encountered an error: {str(e)}"
 
 class WhisperTranscriber:
-    def __init__(self, model_name: str = "base", device: str = "cuda"):
-        # Audio configuration
-        self.config = AudioConfig()
+    def __init__(self, model_name: str = "turbo", device: str = "cuda"):
+        # Initialize both configs
+        self.audio_config = AudioConfig()
+        self.tts_config = TTSConfig()
+        
+        # Set up logging
+        log_file = self.tts_config.log_dir / "whisper.log"
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            handlers=[
+                logging.FileHandler(log_file),
+                logging.StreamHandler()
+            ]
+        )
+        
+        # Use temp directory for recordings
+        self.temp_file = self.tts_config.temp_dir / "current_recording.wav"
         self.is_recording = False
         self.audio_queue = queue.Queue()
         self.recording_data = []
@@ -179,10 +222,10 @@ class WhisperTranscriber:
 
         try:
             with sd.InputStream(
-                samplerate=self.config.samplerate,
-                channels=self.config.channels,
-                dtype=self.config.dtype,
-                blocksize=self.config.blocksize,
+                samplerate=self.audio_config.samplerate,
+                channels=self.audio_config.channels,
+                dtype=self.audio_config.dtype,
+                blocksize=self.audio_config.blocksize,
                 callback=self.audio_callback
             ):
                 while self.is_recording:
@@ -233,12 +276,12 @@ class WhisperTranscriber:
                 logging.warning("No audio data recorded")
                 return
 
-            output_path = Path("output.wav")
             try:
                 full_audio = np.concatenate(self.recording_data)
-                sf.write(output_path, full_audio, self.config.samplerate)
+                # Fix: Use audio_config instead of config
+                sf.write(self.temp_file, full_audio, self.audio_config.samplerate)
                 
-                result = self.transcribe_audio(output_path)
+                result = self.transcribe_audio(self.temp_file)
                 transcribed_text = result.get('text', '').strip()
                 
                 if transcribed_text:
@@ -251,9 +294,9 @@ class WhisperTranscriber:
             except Exception as e:
                 logging.error(f"Processing error: {e}")
             finally:
-                # Cleanup
-                if output_path.exists():
-                    output_path.unlink()
+                # Cleanup using temp_file from tts_config
+                if self.temp_file.exists():
+                    self.temp_file.unlink()
             print("\a")  # System beep
 
     async def process_with_claude_tts(self):
@@ -282,9 +325,21 @@ class WhisperTranscriber:
             logging.info("Synthesizing speech...")
             audio_path = self.tts_engine.synthesize(response)
             
-            # Play audio
+            # Play audio with enhanced quality
             logging.info("Playing audio response...")
             data, samplerate = sf.read(str(audio_path))
+            
+            # Normalize audio (optional)
+            if np.abs(data).max() > 0:
+                data = data / np.abs(data).max() * 0.9
+            
+            # Configure playback settings
+            sd.default.samplerate = samplerate
+            sd.default.channels = 1
+            sd.default.dtype = np.float32
+            sd.default.latency = 'low'
+            sd.default.blocksize = 2048
+            
             sd.play(data, samplerate)
             sd.wait()
             
