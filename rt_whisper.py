@@ -1,3 +1,5 @@
+import sys
+from pathlib import Path
 import whisper
 import sounddevice as sd
 import numpy as np
@@ -10,15 +12,12 @@ import threading
 import torch
 from typing import Optional
 from dataclasses import dataclass
-from pathlib import Path
 import logging
 import os
-import anthropic
+from anthropic import AsyncAnthropic
 import asyncio
-from tacotron2.model import Tacotron2
-from tacotron2.text import text_to_sequence
-from waveglow.denoiser import Denoiser
 import json
+from TTS.api import TTS
 
 # Configure logging
 logging.basicConfig(
@@ -26,7 +25,7 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
-# Original directory setup
+# Directory setup
 output_dir = Path.home() / ".whisper_tmp"
 output_dir.mkdir(exist_ok=True)
 
@@ -44,66 +43,62 @@ class AudioConfig:
 
 @dataclass
 class TTSConfig:
-    """TTS configuration settings"""
+    """Modern TTS configuration settings"""
     model_dir: Path = Path.home() / ".tts_models"
-    tacotron_path: Path = model_dir / "tacotron2_statedict.pt"
-    waveglow_path: Path = model_dir / "waveglow_256channels_universal_v5.pt"
     output_dir: Path = Path.home() / ".tts_output"
+    model_name: str = "tts_models/en/vctk/vits"
     sample_rate: int = 22050
+    speaker_id: str = "p273"  # Added default speaker ID
+    #language: str = "en"
+
+
 
 class TTSEngine:
-    """Text-to-Speech engine using Tacotron2 and WaveGlow"""
+    """Modern Text-to-Speech engine using Coqui TTS"""
     def __init__(self, config: TTSConfig):
         self.config = config
         self.config.model_dir.mkdir(exist_ok=True)
         self.config.output_dir.mkdir(exist_ok=True)
         
-        # Initialize models
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.tacotron2 = self._load_tacotron()
-        self.waveglow = self._load_waveglow()
-        self.denoiser = Denoiser(self.waveglow) if self.device.type == 'cuda' else None
-        
-    def _load_tacotron(self):
-        model = Tacotron2().to(self.device)
-        checkpoint = torch.load(self.config.tacotron_path, map_location=self.device)
-        model.load_state_dict(checkpoint['state_dict'])
-        model.eval()
-        return model
-    
-    def _load_waveglow(self):
-        model = torch.load(self.config.waveglow_path, map_location=self.device)['model']
-        model.eval()
-        return model
-    
+        # Initialize TTS
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        try:
+            self.tts = TTS(model_name=config.model_name, progress_bar=False)
+            if torch.cuda.is_available():
+                self.tts.to(self.device)
+            logging.info(f"TTS model loaded on {self.device}")
+        except Exception as e:
+            logging.error(f"Failed to initialize TTS: {e}")
+            raise
+
     def synthesize(self, text: str, output_path: Optional[Path] = None) -> Path:
         """Synthesize speech from text and return path to audio file"""
         if output_path is None:
             output_path = self.config.output_dir / f"speech_{hash(text)}.wav"
         
-        sequence = torch.tensor(text_to_sequence(text, ['english_cleaners']))[None, :]
-        sequence = sequence.to(self.device)
-        
-        with torch.no_grad():
-            mel_outputs, mel_outputs_postnet, _, alignments = self.tacotron2.inference(sequence)
-            audio = self.waveglow.infer(mel_outputs_postnet)
-            
-            if self.denoiser is not None:
-                audio = self.denoiser(audio, strength=0.01)
-        
-        audio_np = audio[0].cpu().numpy()
-        sf.write(str(output_path), audio_np, self.config.sample_rate)
-        return output_path
+        try:
+            # Generate speech
+            self.tts.tts_to_file(
+                text=text,
+                file_path=str(output_path),
+                speaker=self.config.speaker_id,  # Make sure this line is present
+                #language=self.config.language
+            )
+            return output_path
+        except Exception as e:
+            logging.error(f"Speech synthesis failed: {e}")
+            raise
+
 
 class ClaudeClient:
     """Client for interacting with Anthropic's Claude API"""
     def __init__(self, api_key: str):
-        self.client = anthropic.Anthropic(api_key=api_key)
+        self.client = AsyncAnthropic(api_key=api_key)  # Changed to AsyncAnthropic
     
     async def get_response(self, text: str) -> str:
         """Get response from Claude for the given text"""
         try:
-            message = await self.client.messages.create(
+            response = await self.client.messages.create(
                 model="claude-3-sonnet-20240229",
                 max_tokens=1024,
                 messages=[{
@@ -111,14 +106,14 @@ class ClaudeClient:
                     "content": text
                 }]
             )
-            return message.content[0].text
+            return response.content[0].text
         except Exception as e:
             logging.error(f"Claude API error: {e}")
             return f"Sorry, I encountered an error: {str(e)}"
 
 class WhisperTranscriber:
     def __init__(self, model_name: str = "base", device: str = "cuda"):
-        # Original Whisper initialization
+        # Audio configuration
         self.config = AudioConfig()
         self.is_recording = False
         self.audio_queue = queue.Queue()
@@ -133,12 +128,12 @@ class WhisperTranscriber:
         # Load Whisper model
         try:
             self.model = whisper.load_model(model_name, device=device)
-            logging.info(f"Model loaded on device: {self.model.device}")
+            logging.info(f"Whisper model loaded on device: {self.model.device}")
         except Exception as e:
-            print(f"Failed to load model: {e}")
+            logging.error(f"Failed to load Whisper model: {e}")
             raise
 
-        # New Claude and TTS initialization
+        # Claude and TTS initialization
         self.config_path = Path.home() / ".whisper_config" / "config.json"
         self.config_dir = self.config_path.parent
         self.config_dir.mkdir(exist_ok=True)
@@ -171,14 +166,12 @@ class WhisperTranscriber:
         except Exception as e:
             logging.error(f"Failed to initialize Claude/TTS: {e}")
 
-    # Original audio callback method
     def audio_callback(self, indata: np.ndarray, frames: int, time: sd.CallbackFlags, status: sd.CallbackFlags) -> None:
         """Process audio input in real-time"""
         if status:
             logging.warning(f"Audio callback status: {status}")
         self.audio_queue.put(indata.copy())
 
-    # Original recording method
     def record_audio(self) -> None:
         """Record audio in a separate thread"""
         self.recording_data.clear()
@@ -206,7 +199,6 @@ class WhisperTranscriber:
             logging.error(f"Recording error: {e}")
             self.is_recording = False
 
-    # Original transcription method
     def transcribe_audio(self, audio_path: Path) -> dict:
         """Transcribe audio file using Whisper"""
         try:
@@ -222,7 +214,6 @@ class WhisperTranscriber:
             logging.error(f"Transcription error: {e}")
             return {"text": "Transcription failed"}
 
-    # Original recording start method
     def start_recording(self) -> None:
         """Start recording in a new thread"""
         if not self.is_recording:
@@ -232,7 +223,6 @@ class WhisperTranscriber:
             logging.info("Recording started")
             print("\a")  # System beep
 
-    # Original recording stop method
     def stop_recording(self) -> None:
         """Stop recording and transcribe"""
         if self.is_recording:
