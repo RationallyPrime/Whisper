@@ -19,6 +19,8 @@ import asyncio
 import json
 from TTS.api import TTS
 import transformers
+from prompts import SYSTEM_PROMPTS
+import re
 
 # Silence all warnings and unnecessary logs
 warnings.filterwarnings("ignore", category=UserWarning)  # Suppress audioread warning
@@ -32,14 +34,29 @@ logging.getLogger("numba").setLevel(logging.ERROR)  # Suppress numba warnings
 logging.getLogger("matplotlib").setLevel(logging.ERROR)  # Suppress matplotlib warnings
 
 # Configure logging for our app
+log_dir = Path.home() / ".whisper_logs"
+log_file = log_dir / "whisper.log"
+
+# Debug print absolute paths
+print(f"Log directory: {log_dir.absolute()}")
+print(f"Log file: {log_file.absolute()}")
+
+# Ensure directory exists with proper permissions
+log_dir.mkdir(exist_ok=True, mode=0o755)
+
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(Path.home() / ".whisper_logs" / "whisper.log"),
+        logging.FileHandler(log_file),
         logging.StreamHandler()
-    ]
+    ],
+    force=True  # Ensure our configuration takes precedence
 )
+
+# Add a test log message at startup
+logging.info("RT-Whisper service started")
 
 # Directory setup
 output_dir = Path.home() / ".whisper_tmp"
@@ -62,7 +79,6 @@ class TTSConfig:
     """Modern TTS configuration settings"""
     model_dir: Path = Path.home() / ".tts_models"
     output_dir: Path = Path.home() / ".tts_output"
-    log_dir: Path = Path.home() / ".whisper_logs"
     temp_dir: Path = Path.home() / ".whisper_tmp"
     model_name: str = "tts_models/multilingual/multi-dataset/xtts_v2"
     sample_rate: int = 44100  # Increased from 22050
@@ -72,7 +88,7 @@ class TTSConfig:
 
     def __post_init__(self):
         """Ensure all directories exist"""
-        for dir_path in [self.model_dir, self.output_dir, self.log_dir, self.temp_dir]:
+        for dir_path in [self.model_dir, self.output_dir, self.temp_dir]:
             dir_path.mkdir(exist_ok=True)
 
 class TTSEngine:
@@ -121,22 +137,83 @@ class TTSEngine:
 class ClaudeClient:
     """Client for interacting with Anthropic's Claude API"""
     def __init__(self, api_key: str):
-        self.client = AsyncAnthropic(api_key=api_key)  # Changed to AsyncAnthropic
+        self.client = AsyncAnthropic(api_key=api_key)
+        self.system_prompts = SYSTEM_PROMPTS
     
     async def get_response(self, text: str) -> str:
         """Get response from Claude for the given text"""
         try:
+            # Enhanced logging
+            logging.info(f"Clipboard input: {text}")
+            
+            # Setup logging
+            log_file = Path.home() / ".whisper_logs" / "whisper.log"
+            logging.info(f"Request: {text[:200]}...")  # Log first 200 chars of request
+            
+            # Determine which system prompt to use but keep the prefix in content
+            system_prompt = None
+            content = text  # Keep the full text including prefix
+            
+            if text.lower().startswith("promptify this"):
+                system_prompt = self.system_prompts["promptify"]
+            elif text.lower().startswith("reformat this"):
+                system_prompt = self.system_prompts["reformat"]
+            elif text.lower().startswith("implement this"):
+                system_prompt = self.system_prompts["implement"]
+            elif text.lower().startswith("command line this"):
+                system_prompt = self.system_prompts["command"]
+            elif text.lower().startswith("explain this"):
+                system_prompt = self.system_prompts["explain"]
+            
+            # Add more detailed logging
+            logging.debug(f"System prompt selected: {system_prompt[:100] if system_prompt else 'None'}")
+            logging.debug(f"Content being sent: {content[:100]}")
+            
+            # Create message with the correct format
             response = await self.client.messages.create(
                 model="claude-3-5-sonnet-20241022",
-                max_tokens=1024,
+                max_tokens=4096,
+                system=system_prompt if system_prompt else "",
                 messages=[{
                     "role": "user",
-                    "content": text
+                    "content": content  # Send the full text including prefix
                 }]
             )
-            return response.content[0].text
+            
+            response_text = response.content[0].text
+            
+            if text.lower().startswith("reformat this"):
+                # Log any [Note: ...] content
+                notes = re.findall(r'\[Note:.*?\]', response_text)
+                for note in notes:
+                    logging.info(f"Transcription note: {note}")
+                
+                # Remove [Note: ...] from the response
+                response_text = re.sub(r'\[Note:.*?\]\s*', '', response_text)
+                
+                # Add signature
+                response_text = response_text + "\n\nMessage dictated, not typed.\n— Hákon Freyr"
+            
+            pyperclip.copy(response_text)
+            logging.info(f"Claude response: {response_text}")
+            
+            # Play a quiet beep
+            sd.default.samplerate = 44100
+            duration = 0.1  # seconds
+            frequency = 440  # Hz (A4 note)
+            t = np.linspace(0, duration, int(44100 * duration))
+            beep = np.sin(2 * np.pi * frequency * t) * 0.3
+            sd.play(beep, 44100)
+            sd.wait()
+            
+            # Force flush the logs
+            for handler in logging.getLogger().handlers:
+                handler.flush()
+                
+            return response_text
         except Exception as e:
-            logging.error(f"Claude API error: {e}")
+            error_msg = f"Claude API error: {e}"
+            logging.error(error_msg)
             return f"Sorry, I encountered an error: {str(e)}"
 
 class WhisperTranscriber:
@@ -145,18 +222,7 @@ class WhisperTranscriber:
         self.audio_config = AudioConfig()
         self.tts_config = TTSConfig()
         
-        # Set up logging
-        log_file = self.tts_config.log_dir / "whisper.log"
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(levelname)s - %(message)s',
-            handlers=[
-                logging.FileHandler(log_file),
-                logging.StreamHandler()
-            ]
-        )
-        
-        # Use temp directory for recordings
+        # Use temp_file from tts_config for recordings
         self.temp_file = self.tts_config.temp_dir / "current_recording.wav"
         self.is_recording = False
         self.audio_queue = queue.Queue()
@@ -286,8 +352,7 @@ class WhisperTranscriber:
                 
                 if transcribed_text:
                     pyperclip.copy(transcribed_text)
-                    logging.info(f"Transcribed: {transcribed_text}")
-                    logging.info("Text copied to clipboard")
+                    logging.info(f"Transcribed and copied to clipboard: {transcribed_text}")
                 else:
                     logging.warning("No text transcribed")
                     
@@ -300,53 +365,62 @@ class WhisperTranscriber:
             print("\a")  # System beep
 
     async def process_with_claude_tts(self):
-        """Process clipboard content with Claude and TTS"""
-        if not self.claude_client or not self.tts_engine:
-            logging.error("Claude/TTS not initialized")
-            return
-        
         try:
-            # Get clipboard content
             text = pyperclip.paste()
             if not text:
                 logging.warning("No text in clipboard")
                 return
             
-            logging.info("Sending to Claude: " + text[:100] + "...")
+            text_lower = text.lower().strip()
+            
+            # Check if it's an explain command
+            is_explain_command = text_lower.startswith(("explain this:", "explain this.", "explain this", "explain this colon"))
+            
+            # Check for other keyword commands
+            is_other_keyword_command = (
+                text_lower.startswith(("promptify this:", "promptify this.", "promptify this"))
+                or text_lower.startswith(("reformat this:", "reformat this.", "reformat this"))
+                or text_lower.startswith(("implement this:", "implement this.", "implement this"))
+                or text_lower.startswith(("command line this:", "command line this.", "command line this"))
+                or text_lower.startswith("promptify this colon")
+                or text_lower.startswith("reformat this colon")
+                or text_lower.startswith("implement this colon")
+                or text_lower.startswith("command line this colon")
+            )
             
             # Get Claude's response
             response = await self.claude_client.get_response(text)
             if not response:
                 return
             
-            logging.info("Received from Claude: " + response[:100] + "...")
-            
-            # Synthesize speech
-            logging.info("Synthesizing speech...")
-            audio_path = self.tts_engine.synthesize(response)
-            
-            # Play audio with enhanced quality
-            logging.info("Playing audio response...")
-            data, samplerate = sf.read(str(audio_path))
-            
-            # Normalize audio (optional)
-            if np.abs(data).max() > 0:
-                data = data / np.abs(data).max() * 0.9
-            
-            # Configure playback settings
-            sd.default.samplerate = samplerate
-            sd.default.channels = 1
-            sd.default.dtype = np.float32
-            sd.default.latency = 'low'
-            sd.default.blocksize = 2048
-            
-            sd.play(data, samplerate)
-            sd.wait()
-            
-            # Copy Claude's response to clipboard
+            # Copy response to clipboard
             pyperclip.copy(response)
-            logging.info("Claude's response copied to clipboard")
+            logging.info("Response copied to clipboard")
             
+            # Only synthesize speech for explain commands
+            if is_explain_command:
+                logging.info("Explain command detected - synthesizing speech...")
+                # Synthesize speech
+                audio_path = self.tts_engine.synthesize(response)
+                
+                # Play audio with enhanced quality
+                logging.info("Playing audio response...")
+                data, samplerate = sf.read(str(audio_path))
+                
+                if np.abs(data).max() > 0:
+                    data = data / np.abs(data).max() * 0.9
+                
+                sd.default.samplerate = samplerate
+                sd.default.channels = 1
+                sd.default.dtype = np.float32
+                sd.default.latency = 'low'
+                sd.default.blocksize = 2048
+                
+                sd.play(data, samplerate)
+                sd.wait()
+            elif is_other_keyword_command:
+                logging.info("Other keyword command detected - skipping speech synthesis")
+                
         except Exception as e:
             logging.error(f"Claude/TTS processing error: {e}")
 
@@ -366,7 +440,15 @@ class WhisperTranscriber:
     def run(self) -> None:
         """Main execution loop"""
         if self.claude_config.get("enable_claude_tts"):
-            logging.info("Press 'F12' to start recording, 'F11' to stop recording, 'F10' for Claude+TTS, 'Ctrl+C' to exit")
+            logging.info("""
+        Commands:
+        - Press 'F12' to start recording
+        - Press 'F11' to stop recording
+        - Press 'F10' for Claude+TTS
+        - Start speech with 'promptify this:' to create LLM prompts
+        - Start speech with 'reformat this:' to clean up transcribed text
+        - Press 'Ctrl+C' to exit
+        """)
         else:
             logging.info("Press 'F12' to start recording, 'F11' to stop recording, 'Ctrl+C' to exit")
         
