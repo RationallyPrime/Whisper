@@ -21,6 +21,7 @@ from TTS.api import TTS
 import transformers
 from prompts import SYSTEM_PROMPTS
 import re
+import time
 
 # Silence all warnings and unnecessary logs
 warnings.filterwarnings("ignore", category=UserWarning)  # Suppress audioread warning
@@ -38,19 +39,24 @@ log_dir = Path.home() / ".whisper_logs"
 log_file = log_dir / "whisper.log"
 
 # Debug print absolute paths
-print(f"Log directory: {log_dir.absolute()}")
-print(f"Log file: {log_file.absolute()}")
+# Removed print statements to prevent logging to stdout
 
 # Ensure directory exists with proper permissions
 log_dir.mkdir(exist_ok=True, mode=0o755)
 
-# Configure logging
+# Configure logging to write only to a file with RotatingFileHandler
+from logging.handlers import RotatingFileHandler
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(log_file),
-        logging.StreamHandler()
+        RotatingFileHandler(
+            log_file,
+            maxBytes=10*1024*1024,  # 10 MB
+            backupCount=5,
+            encoding='utf-8'
+        )
     ],
     force=True  # Ensure our configuration takes precedence
 )
@@ -133,28 +139,23 @@ class TTSEngine:
             logging.error(f"Speech synthesis failed: {e}")
             raise
 
-
 class ClaudeClient:
     """Client for interacting with Anthropic's Claude API"""
     def __init__(self, api_key: str):
         self.client = AsyncAnthropic(api_key=api_key)
-        self.system_prompts = SYSTEM_PROMPTS
-    
+        self.system_prompts = SYSTEM_PROMPTS  # Ensure SYSTEM_PROMPTS includes "translate" and "summarize"
+
     async def get_response(self, text: str) -> str:
         """Get response from Claude for the given text"""
         try:
             # Enhanced logging
             logging.info(f"Clipboard input: {text}")
             
-            # Setup logging
-            log_file = Path.home() / ".whisper_logs" / "whisper.log"
-            logging.info(f"Request: {text[:200]}...")  # Log first 200 chars of request
-            
             # Determine which system prompt to use but keep the prefix in content
             system_prompt = None
             content = text  # Keep the full text including prefix
             
-            if text.lower().startswith("promptify this"):
+            if text.lower().startswith("promptify this:"):
                 system_prompt = self.system_prompts["promptify"]
             elif text.lower().startswith("reformat this"):
                 system_prompt = self.system_prompts["reformat"]
@@ -164,6 +165,10 @@ class ClaudeClient:
                 system_prompt = self.system_prompts["command"]
             elif text.lower().startswith("explain this"):
                 system_prompt = self.system_prompts["explain"]
+            elif text.lower().startswith("translate this into"):
+                system_prompt = self.system_prompts["translate"]
+            elif text.lower().startswith("summarize this"):
+                system_prompt = self.system_prompts.get("summarize", "Please provide a summary of the following text.")
             
             # Add more detailed logging
             logging.debug(f"System prompt selected: {system_prompt[:100] if system_prompt else 'None'}")
@@ -182,7 +187,7 @@ class ClaudeClient:
             
             response_text = response.content[0].text
             
-            if text.lower().startswith("reformat this"):
+            if text.lower().startswith("reformat this:"):
                 # Log any [Note: ...] content
                 notes = re.findall(r'\[Note:.*?\]', response_text)
                 for note in notes:
@@ -218,22 +223,14 @@ class ClaudeClient:
 
 class WhisperTranscriber:
     def __init__(self, model_name: str = "turbo", device: str = "cuda"):
-        # Initialize both configs
+        # Initialize audio and Whisper model
         self.audio_config = AudioConfig()
-        self.tts_config = TTSConfig()
-        
-        # Use temp_file from tts_config for recordings
-        self.temp_file = self.tts_config.temp_dir / "current_recording.wav"
+        self.temp_file = Path.home() / ".whisper_tmp" / "current_recording.wav"
         self.is_recording = False
         self.audio_queue = queue.Queue()
         self.recording_data = []
         self.recording_thread: Optional[threading.Thread] = None
-        
-        # Ensure CUDA is available if requested
-        if device == "cuda" and not torch.cuda.is_available():
-            logging.warning("CUDA not available, falling back to CPU")
-            device = "cpu"
-        
+
         # Load Whisper model
         try:
             self.model = whisper.load_model(model_name, device=device)
@@ -242,16 +239,18 @@ class WhisperTranscriber:
             logging.error(f"Failed to load Whisper model: {e}")
             raise
 
-        # Claude and TTS initialization
+        # Load configuration
         self.config_path = Path.home() / ".whisper_config" / "config.json"
         self.config_dir = self.config_path.parent
         self.config_dir.mkdir(exist_ok=True)
         self.claude_config = self._load_config()
-        
-        # Initialize Claude and TTS if configured
-        self.claude_client = None
-        self.tts_engine = None
-        if self.claude_config.get("enable_claude_tts", False):
+
+        # Initialize double-press detection for F10
+        self.last_f10_press = 0
+        self.F10_DOUBLE_PRESS_THRESHOLD = 0.5  # seconds
+
+        # Initialize Claude and TTS if enabled
+        if self.claude_config.get("enable_claude_tts"):
             self._initialize_claude_tts()
 
     def _load_config(self) -> dict:
@@ -344,7 +343,6 @@ class WhisperTranscriber:
 
             try:
                 full_audio = np.concatenate(self.recording_data)
-                # Fix: Use audio_config instead of config
                 sf.write(self.temp_file, full_audio, self.audio_config.samplerate)
                 
                 result = self.transcribe_audio(self.temp_file)
@@ -365,27 +363,56 @@ class WhisperTranscriber:
             print("\a")  # System beep
 
     async def process_with_claude_tts(self):
+        if not self.claude_config.get("enable_claude_tts"):
+            logging.warning("Claude TTS is not enabled. Please activate it first.")
+            return
+
         try:
             text = pyperclip.paste()
             if not text:
                 logging.warning("No text in clipboard")
                 return
-            
-            text_lower = text.lower().strip()
-            
+
+            # Check for "Voice Mode Activate" command
+            if text.lower().strip() == "voice mode activate":
+                logging.info("Voice Mode Activate command detected - initializing TTS...")
+                self._initialize_claude_tts()
+                logging.info("TTS Initialized.")
+                return
+
+            # Check for "translate this into [language]:" command using regex
+            translate_match = re.match(r"translate this into (\w+):\s*(.+)", text, re.IGNORECASE)
+            if translate_match:
+                target_language = translate_match.group(1)
+                content_to_translate = translate_match.group(2)
+                logging.info(f"Translate command detected - translating to {target_language}")
+                # Update system prompt with specific language if needed
+                system_prompt = self.system_prompts.get("translate", "")
+                # Optionally, modify the system prompt to include target language
+                # For simplicity, we'll assume the system prompt can handle the target language from the request
+                response = await self.claude_client.get_response(text)
+                if response:
+                    pyperclip.copy(response)
+                    logging.info("Translated text copied to clipboard")
+                return
+
+            # Check for "summarize this:" command
+            summarize_match = re.match(r"summarize this:\s*(.+)", text, re.IGNORECASE)
+            if summarize_match:
+                logging.info("Summarize command detected - processing summarization...")
+                response = await self.claude_client.get_response(text)
+                if response:
+                    pyperclip.copy(response)
+                    logging.info("Summarized text copied to clipboard")
+                return
+
             # Check if it's an explain command
-            is_explain_command = text_lower.startswith(("explain this:", "explain this.", "explain this", "explain this colon"))
+            is_explain_command = re.match(r"explain this[:. ]\s*(.+)", text, re.IGNORECASE)
             
             # Check for other keyword commands
-            is_other_keyword_command = (
-                text_lower.startswith(("promptify this:", "promptify this.", "promptify this"))
-                or text_lower.startswith(("reformat this:", "reformat this.", "reformat this"))
-                or text_lower.startswith(("implement this:", "implement this.", "implement this"))
-                or text_lower.startswith(("command line this:", "command line this.", "command line this"))
-                or text_lower.startswith("promptify this colon")
-                or text_lower.startswith("reformat this colon")
-                or text_lower.startswith("implement this colon")
-                or text_lower.startswith("command line this colon")
+            is_other_keyword_command = re.match(
+                r"^(promptify this[:. ]|reformat this[:. ]|implement this[:. ]|command line this[:. ])",
+                text.lower()
             )
             
             # Get Claude's response
@@ -431,8 +458,22 @@ class WhisperTranscriber:
                 self.start_recording()
             elif key == keyboard.Key.f11 and self.is_recording:
                 self.stop_recording()
-            elif key == keyboard.Key.f10 and self.claude_config.get("enable_claude_tts"):
+            elif key == keyboard.Key.f10:
+                current_time = time.time()
+                if current_time - self.last_f10_press < self.F10_DOUBLE_PRESS_THRESHOLD:
+                    # Double-press detected, modify clipboard content for summarization
+                    current_text = pyperclip.paste()
+                    if current_text:
+                        modified_text = f"summarize this: {current_text}"
+                        pyperclip.copy(modified_text)
+                        logging.info("Double F10 press detected - Summarization triggered")
+                        asyncio.run(self.process_with_claude_tts())
+                        self.last_f10_press = 0  # Reset timer
+                else:
+                    self.last_f10_press = current_time
+
                 logging.info("Processing with Claude and TTS...")
+                # Single press processing (if not double press)
                 asyncio.run(self.process_with_claude_tts())
         except Exception as e:
             logging.error(f"Keyboard handling error: {e}")
@@ -441,16 +482,28 @@ class WhisperTranscriber:
         """Main execution loop"""
         if self.claude_config.get("enable_claude_tts"):
             logging.info("""
-        Commands:
-        - Press 'F12' to start recording
-        - Press 'F11' to stop recording
-        - Press 'F10' for Claude+TTS
-        - Start speech with 'promptify this:' to create LLM prompts
-        - Start speech with 'reformat this:' to clean up transcribed text
-        - Press 'Ctrl+C' to exit
-        """)
+Commands:
+- Press 'F12' to start recording
+- Press 'F11' to stop recording
+- Press 'F10' for Claude+TTS
+  - Single press: Process current clipboard content with Claude
+  - Double press: Summarize current clipboard content
+- Start speech with 'promptify this:' to create LLM prompts
+- Start speech with 'reformat this:' to clean up transcribed text
+- Start speech with 'implement this:' to generate code
+- Start speech with 'command line this:' to generate terminal commands
+- Start speech with 'translate this into [language]:' to translate text
+- Press 'Ctrl+C' to exit
+""")
         else:
-            logging.info("Press 'F12' to start recording, 'F11' to stop recording, 'Ctrl+C' to exit")
+            logging.info("""
+Commands:
+- Press 'F12' to start recording
+- Press 'F11' to stop recording
+- Press 'F10' to process text with Claude
+  - Double press 'F10' to summarize
+- Press 'Ctrl+C' to exit
+""")
         
         with keyboard.Listener(on_press=self.on_press) as listener:
             try:

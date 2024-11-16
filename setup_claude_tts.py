@@ -2,6 +2,17 @@ from pathlib import Path
 import json
 import os
 from dotenv import load_dotenv
+from prompts import SYSTEM_PROMPTS
+
+def validate_prompts():
+    """Validate that all required prompts are present and well-formed"""
+    required_prompts = ["promptify", "reformat", "implement", "command"]
+    missing_prompts = [p for p in required_prompts if p not in SYSTEM_PROMPTS]
+    
+    if missing_prompts:
+        print(f"Warning: Missing required prompts: {', '.join(missing_prompts)}")
+        return False
+    return True
 
 def setup_modern_tts():
     """Setup function for modern TTS configuration"""
@@ -10,6 +21,11 @@ def setup_modern_tts():
     config_path = config_dir / "config.json"
     
     print("Setting up Claude and modern TTS configuration...")
+    
+    # Validate system prompts
+    if not validate_prompts():
+        print("Error: System prompts validation failed")
+        return
     
     # Create TTS output directory
     tts_output_dir = Path.home() / ".tts_output"
@@ -30,15 +46,22 @@ def setup_modern_tts():
     
     config = {
         "enable_claude_tts": True,
-        "anthropic_api_key": api_key
+        "anthropic_api_key": api_key,
+        "available_commands": list(SYSTEM_PROMPTS.keys())
     }
     
     with open(config_path, "w") as f:
         json.dump(config, f)
     
     print("\nConfiguration is ready!")
-    print("You can now use F10 to process text with Claude and modern TTS.")
-    print("TIP: To change the API key later, either:")
+    print("Available commands:")
+    for cmd in SYSTEM_PROMPTS.keys():
+        print(f"  - {cmd} this: [content]")
+    print("\nYou can now use:")
+    print("  - F12 to start recording")
+    print("  - F11 to stop recording")
+    print("  - F10 to process text with Claude and TTS")
+    print("\nTIP: To change the API key later, either:")
     print("  1. Update your .env file and run this script again")
     print(f"  2. Directly edit {config_path}")
 

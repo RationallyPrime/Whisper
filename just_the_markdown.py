@@ -6,7 +6,8 @@ import asyncio
 from anthropic import AsyncAnthropic  # Changed to AsyncAnthropic
 from typing import Dict, Any
 from dotenv import load_dotenv
-from tqdm.asyncio import tqdm_asyncio
+from tqdm import tqdm  # Add this
+from tqdm.asyncio import tqdm as tqdm_async  # Change this
 import tiktoken
 
 # Set up logging
@@ -297,55 +298,142 @@ async def process_file(filepath: str, client: AsyncAnthropic,
         logger.error(f"Error processing {filepath}: {str(e)}")
         return False
 
+async def parse_json_to_markdown(json_file_path: str, output_dir: str):
+    """Parse JSON export into markdown files organized by month"""
+    try:
+        with open(json_file_path, 'r') as f:
+            data = json.load(f)
+        
+        logger.info(f"Found {len(data)} conversations in JSON export")
+        
+        # Create output directories
+        os.makedirs(output_dir, exist_ok=True)
+        oversized_dir = os.path.join(output_dir, "oversized")
+        os.makedirs(oversized_dir, exist_ok=True)
+        
+        # Change this line to use regular tqdm since we're not doing async operations here
+        for conversation in tqdm(data, desc="Converting to markdown"):
+            try:
+                # Extract metadata
+                title = conversation.get('title', 'Untitled_Conversation')
+                create_time = conversation.get('create_time', datetime.now().timestamp())
+                date = datetime.fromtimestamp(create_time)
+                date_str = date.strftime('%Y-%m-%d')
+                
+                # Process messages
+                markdown_lines = []
+                for msg in conversation.get('messages', []):
+                    try:
+                        author_role = msg['message']['author']['role']
+                        content_parts = msg['message']['content']['parts']
+                        
+                        content = "\n".join(str(part) for part in content_parts)
+                        if not content.strip():
+                            continue
+                        
+                        if author_role == 'user':
+                            markdown_lines.append(f"**User:**\n{content}\n\n")
+                        elif author_role == 'assistant':
+                            markdown_lines.append(f"**Assistant:**\n{content}\n\n")
+                        elif author_role == 'system':
+                            if content.strip():
+                                markdown_lines.append(f"**System:**\n{content}\n\n")
+                    
+                    except Exception as e:
+                        logger.error(f"Error processing message: {str(e)}")
+                        continue
+                
+                markdown_content = "".join(markdown_lines)
+                token_count = count_tokens(markdown_content)
+                
+                # Create filename
+                name = "".join(x for x in title if x.isalnum() or x in [' ', '-', '_']).rstrip()
+                name = name.replace(' ', '_')
+                filename = f"conversation_{date_str}_{name}.md"
+                
+                # Determine output directory based on size
+                if token_count > TARGET_CHUNK_TOKENS:
+                    output_file = os.path.join(oversized_dir, filename)
+                else:
+                    month_dir = os.path.join(output_dir, date.strftime('%Y-%m'))
+                    os.makedirs(month_dir, exist_ok=True)
+                    output_file = os.path.join(month_dir, filename)
+                
+                # Write markdown file
+                with open(output_file, 'w', encoding='utf-8') as f:
+                    f.write(f"# {title}\n\n")
+                    f.write(f"**Date:** {date_str}\n\n")
+                    f.write(f"**Token Count:** {token_count}\n\n")
+                    f.write("## Conversation\n\n")
+                    f.write(markdown_content)
+                
+            except Exception as e:
+                logger.error(f"Error processing conversation: {str(e)}")
+                continue
+        
+        logger.info("JSON export parsing complete")
+        
+    except Exception as e:
+        logger.error(f"Error parsing JSON file: {str(e)}")
+        raise
+
+# Update main function to handle both tasks
 async def main():
-    # Update logging level to see more details
-    logger.setLevel(logging.DEBUG)
-    
     load_dotenv()
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         logger.error("ANTHROPIC_API_KEY not found in environment variables")
         return
     
-    client = AsyncAnthropic(api_key=api_key)
-    summary_collection = SummaryCollection()
-    tracker = ProcessingTracker(PROCESSED_FILE)
-    markdown_dir = "/home/rationallyprime/Emma/markdown_exports/oversized"
+    # File paths
+    json_file_path = "conversations.json"
+    markdown_dir = "/home/rationallyprime/Emma/markdown_exports"
+    october_dir = os.path.join(markdown_dir, "2024-10")  # Specifically target October
     
     try:
-        markdown_files = [
-            os.path.join(root, file)
-            for root, _, files in os.walk(markdown_dir)
-            for file in files
-            if file.endswith('.md')
-        ]
+        # First, parse JSON to markdown
+        logger.info("Starting JSON to markdown conversion...")
+        await parse_json_to_markdown(json_file_path, markdown_dir)
         
-        if not markdown_files:
-            logger.info("No oversized markdown files found to process")
+        # Then proceed with summary processing, but only for October files
+        logger.info("Starting summary processing for October conversations...")
+        client = AsyncAnthropic(api_key=api_key)
+        summary_collection = SummaryCollection()
+        tracker = ProcessingTracker(PROCESSED_FILE)
+        
+        # Collect only October markdown files
+        october_files = []
+        if os.path.exists(october_dir):
+            for file in os.listdir(october_dir):
+                if file.endswith('.md'):
+                    october_files.append(os.path.join(october_dir, file))
+        
+        if not october_files:
+            logger.info("No October conversations found to process")
             return
             
-        logger.info(f"Found {len(markdown_files)} oversized markdown files to process")
+        logger.info(f"Found {len(october_files)} October conversations to process")
         
-        # Process in smaller batches with rate limiting
+        # Process October files with progress bar
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
-        for i in range(0, len(markdown_files), BATCH_SIZE):
-            batch = markdown_files[i:i + BATCH_SIZE]
-            results = await tqdm_asyncio.gather(
-                *[process_file(f, client, summary_collection, semaphore, tracker) 
-                  for f in batch],
-                desc=f"Processing batch {i//BATCH_SIZE + 1}/{len(markdown_files)//BATCH_SIZE + 1}"
+        tasks = [
+            process_file(
+                filepath,
+                client,
+                summary_collection,
+                semaphore,
+                tracker
             )
-            
-            successful = sum(1 for r in results if r)
-            logger.info(f"Batch {i//BATCH_SIZE + 1}: Successfully processed {successful}/{len(batch)} files")
-            
-            # Add longer delay between batches to respect rate limits
-            await asyncio.sleep(2)
-
-        logger.info(f"Summaries saved to {summary_collection.output_file}")
+            for filepath in october_files
+        ]
+        
+        results = await tqdm_async.gather(*tasks)  # Change this line
+        successful = len([r for r in results if r])
+        logger.info(f"Successfully processed {successful} October conversations")
         
     except KeyboardInterrupt:
         logger.info("Processing paused by user. Progress saved.")
 
 if __name__ == "__main__":
     asyncio.run(main())
+
