@@ -6,3 +6,6 @@
 *.csv
 *.md
 /models
+conversations/node_modules
+/home/rationallyprime/Whisper/conversation-analysis
+conversation-analysis/*
