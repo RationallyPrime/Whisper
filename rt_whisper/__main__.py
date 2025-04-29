@@ -71,6 +71,12 @@ def parse_args():
         help="Enable debug logging"
     )
     
+    parser.add_argument(
+        "--command-mode",
+        action="store_true",
+        help="Run in command mode instead of hotkey mode"
+    )
+    
     return parser.parse_args()
 
 
@@ -105,7 +111,7 @@ def main():
     
     # Run the transcriber
     try:
-        transcriber.run()
+        transcriber.run(command_mode=args.command_mode)
     except KeyboardInterrupt:
         print("\nExiting...")
 

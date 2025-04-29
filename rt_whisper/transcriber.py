@@ -18,6 +18,7 @@ from logging.handlers import RotatingFileHandler
 import os
 import json
 import asyncio
+import time
 from dotenv import load_dotenv
 
 # Optional import for Claude integration
@@ -277,138 +278,117 @@ class WhisperTranscriber:
             logging.warning("Claude is not enabled or properly configured")
             return
             
-        await self.claude_client.process_clipboard(prefix)
+        try:
+            # If prefix is provided, modify the clipboard content
+            if prefix:
+                text = pyperclip.paste()
+                if text:
+                    pyperclip.copy(f"{prefix}: {text}")
+                    
+            # Process the clipboard content
+            await self.claude_client.process_clipboard()
+        except Exception as e:
+            logging.error(f"Claude processing error: {e}")
 
     def on_press(self, key: keyboard.Key) -> None:
-        """Handle keyboard press events for transcription and Claude integration."""
-        try:
-            # Get the current state of modifier keys
-            ctrl_pressed = keyboard.Controller().pressed(keyboard.Key.ctrl)
-            alt_pressed = keyboard.Controller().pressed(keyboard.Key.alt)
-            shift_pressed = keyboard.Controller().pressed(keyboard.Key.shift)
-            
-            # Check for Stream Deck specific keys (without modifiers)
-            # Using numpad keys to avoid conflicts with regular usage
-            try:
-                # Handle numeric keypad keys for Stream Deck
-                if hasattr(key, 'char'):
-                    # Stream Deck hotkeys for recording
-                    if key.char == '0' and not self.is_recording:  # Numpad 0
-                        logging.info("Stream Deck hotkey - Start recording")
-                        self.start_recording()
-                        return
-                        
-                    # Stream Deck hotkeys for Claude functions
-                    if self.claude_client:
-                        if key.char == '1':  # Numpad 1
-                            logging.info("Stream Deck hotkey - Processing with Claude (Explain)")
-                            asyncio.run(self.process_with_claude("explain this"))
-                            return
-                        elif key.char == '2':  # Numpad 2
-                            logging.info("Stream Deck hotkey - Processing with Claude (Reformat)")
-                            asyncio.run(self.process_with_claude("reformat this"))
-                            return
-                        elif key.char == '3':  # Numpad 3
-                            logging.info("Stream Deck hotkey - Processing with Claude (Promptify)")
-                            asyncio.run(self.process_with_claude("promptify this"))
-                            return
-                        elif key.char == '4':  # Numpad 4
-                            logging.info("Stream Deck hotkey - Processing with Claude (Implement)")
-                            asyncio.run(self.process_with_claude("implement this"))
-                            return
-                        elif key.char == '5':  # Numpad 5
-                            logging.info("Stream Deck hotkey - Processing with Claude (Command)")
-                            asyncio.run(self.process_with_claude("command line this"))
-                            return
-                        elif key.char == '6':  # Numpad 6
-                            logging.info("Stream Deck hotkey - Processing with Claude (Summarize)")
-                            asyncio.run(self.process_with_claude("summarize this"))
-                            return
-            except AttributeError:
-                # Not a character key, continue with normal processing
-                pass
-                
-            # Original keyboard shortcuts (with modifiers)
-            if ctrl_pressed and alt_pressed and shift_pressed:
-                # Only process if all modifiers are held
-                if key == keyboard.Key.f12 and not self.is_recording:
-                    self.start_recording()
-                # Claude integration key commands
-                elif self.claude_client and key == keyboard.Key.f10:
-                    logging.info("F10 pressed - Processing with Claude (Explain)")
-                    asyncio.run(self.process_with_claude("explain this"))
-                elif self.claude_client and key == keyboard.Key.f9:
-                    logging.info("F9 pressed - Processing with Claude (Reformat)")
-                    asyncio.run(self.process_with_claude("reformat this"))
-                elif self.claude_client and key == keyboard.Key.f8:
-                    logging.info("F8 pressed - Processing with Claude (Promptify)")
-                    asyncio.run(self.process_with_claude("promptify this"))
-                elif self.claude_client and key == keyboard.Key.f7:
-                    logging.info("F7 pressed - Processing with Claude (Implement)")
-                    asyncio.run(self.process_with_claude("implement this"))
-                elif self.claude_client and key == keyboard.Key.f6:
-                    logging.info("F6 pressed - Processing with Claude (Command)")
-                    asyncio.run(self.process_with_claude("command line this"))
-                elif self.claude_client and key == keyboard.Key.f5:
-                    logging.info("F5 pressed - Processing with Claude (Summarize)")
-                    asyncio.run(self.process_with_claude("summarize this"))
-        except Exception as e:
-            logging.error(f"Keyboard press handling error: {e}")
+        """Legacy method for keyboard shortcuts - maintained for backward compatibility."""
+        pass
             
     def on_release(self, key: keyboard.Key) -> None:
-        """Handle keyboard release events for press-and-hold recording."""
+        """Legacy method for keyboard shortcuts - maintained for backward compatibility."""
+        pass
+    
+    def check_for_commands(self):
+        """Check for command files and execute them."""
+        command_file = Path.home() / ".whisper_logs" / "command.json"
+        if not command_file.exists():
+            return
+        
         try:
-            # Check for Stream Deck numpad key
-            try:
-                if hasattr(key, 'char') and key.char == '0' and self.is_recording:
-                    logging.info("Stream Deck hotkey - Stop recording")
-                    self.stop_recording()
-                    return
-            except AttributeError:
-                # Not a character key, continue with normal processing
-                pass
-                
-            # Original F12 release handling
-            if key == keyboard.Key.f12 and self.is_recording:
+            with open(command_file, "r") as f:
+                command_data = json.load(f)
+            
+            command = command_data.get("command")
+            timestamp = command_data.get("timestamp", 0)
+            
+            if time.time() - timestamp > 5:
+                command_file.unlink()
+                return
+            
+            logging.info(f"Processing command: {command}")
+            
+            if command == "start_recording" and not self.is_recording:
+                self.start_recording()
+            elif command == "stop_recording" and self.is_recording:
                 self.stop_recording()
+            elif command == "process_clipboard" and self.claude_client:
+                asyncio.run(self.process_with_claude())
+            elif command == "explain_clipboard" and self.claude_client:
+                text = pyperclip.paste()
+                if text:
+                    pyperclip.copy(f"explain this: {text}")
+                    asyncio.run(self.process_with_claude())
+            elif command == "summarize_clipboard" and self.claude_client:
+                text = pyperclip.paste()
+                if text:
+                    pyperclip.copy(f"summarize this: {text}")
+                    asyncio.run(self.process_with_claude())
+            elif command == "promptify_clipboard" and self.claude_client:
+                text = pyperclip.paste()
+                if text:
+                    pyperclip.copy(f"promptify this: {text}")
+                    asyncio.run(self.process_with_claude())
+            elif command == "reformat_clipboard" and self.claude_client:
+                text = pyperclip.paste()
+                if text:
+                    pyperclip.copy(f"reformat this: {text}")
+                    asyncio.run(self.process_with_claude())
+            elif command == "implement_clipboard" and self.claude_client:
+                text = pyperclip.paste()
+                if text:
+                    pyperclip.copy(f"implement this: {text}")
+                    asyncio.run(self.process_with_claude())
+            elif command == "command_clipboard" and self.claude_client:
+                text = pyperclip.paste()
+                if text:
+                    pyperclip.copy(f"command line this: {text}")
+                    asyncio.run(self.process_with_claude())
+            elif command == "translate_clipboard" and self.claude_client:
+                text = pyperclip.paste()
+                if text:
+                    pyperclip.copy(f"translate this into English: {text}")
+                    asyncio.run(self.process_with_claude())
+            
+            command_file.unlink()
         except Exception as e:
-            logging.error(f"Keyboard release handling error: {e}")
+            logging.error(f"Error processing command: {e}")
+            command_file.unlink()
 
-    def run(self) -> None:
+    def run_command_mode(self):
+        """Run in command mode, waiting for commands."""
+        logging.info("RT-Whisper started in command mode.")
+        
+        try:
+            while True:
+                self.check_for_commands()
+                time.sleep(0.1)
+        except KeyboardInterrupt:
+            logging.info("Shutting down...")
+            if self.is_recording:
+                self.stop_recording()
+
+    def run(self, command_mode=False) -> None:
         """Main execution loop."""
-        if self.claude_client:
-            logging.info("""
-RT-Whisper started with Claude integration.
-Standard Commands (All require Ctrl+Alt+Shift):
-- Press and hold F12: Record while held (release to transcribe)
-- F10: Process clipboard with Claude (Explain)
-- F9: Reformat transcribed text
-- F8: Create LLM prompts
-- F7: Generate code implementation
-- F6: Generate terminal commands
-- F5: Summarize text
+        if command_mode:
+            self.run_command_mode()
+            return
+            
+        # Legacy hotkey mode - kept for backward compatibility
+        logging.info("""
+RT-Whisper started in legacy hotkey mode. 
+Consider using command mode with StreamDeck for better reliability.
 
-Stream Deck Compatible Commands (No modifiers needed):
-- Press and hold Numpad 0: Record while held (release to transcribe)
-- Numpad 1: Process clipboard with Claude (Explain)
-- Numpad 2: Reformat transcribed text
-- Numpad 3: Create LLM prompts
-- Numpad 4: Generate code implementation  
-- Numpad 5: Generate terminal commands
-- Numpad 6: Summarize text
-
-- Press 'Ctrl+C' to exit
-""")
-        else:
-            logging.info("""
-RT-Whisper started.
-Standard Commands (All require Ctrl+Alt+Shift):
-- Press and hold F12: Record while held (release to transcribe)
-
-Stream Deck Compatible Commands:
-- Press and hold Numpad 0: Record while held (release to transcribe)
-
-- Press 'Ctrl+C' to exit
+Press 'Ctrl+C' to exit
 """)
 
         with keyboard.Listener(on_press=self.on_press, on_release=self.on_release) as listener:

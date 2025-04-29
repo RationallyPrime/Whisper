@@ -9,3 +9,6 @@
 conversations/node_modules
 /home/rationallyprime/Whisper/conversation-analysis
 conversation-analysis/*
+verdict_processor.py
+verdict_section_processor.py
+archive/*
