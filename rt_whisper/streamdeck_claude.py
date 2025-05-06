@@ -14,6 +14,10 @@ log_dir = Path.home() / ".whisper_logs"
 log_dir.mkdir(exist_ok=True)
 log_file = log_dir / "streamdeck.log"
 
+# Reset root logger's handlers for Python 3.12+ compatibility
+for handler in logging.root.handlers[:]:
+    logging.root.removeHandler(handler)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",

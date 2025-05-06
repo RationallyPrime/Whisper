@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """
 StreamDeck button for starting RT-Whisper recording
 """
@@ -13,6 +13,11 @@ import json
 # Configure logging
 log_dir = Path.home() / ".whisper_logs"
 log_dir.mkdir(exist_ok=True)
+
+# Reset root logger's handlers for Python 3.12+ compatibility
+for handler in logging.root.handlers[:]:
+    logging.root.removeHandler(handler)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",

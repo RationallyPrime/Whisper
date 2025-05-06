@@ -7,7 +7,7 @@ name = "rt-whisper"
 version = "0.2.0"
 description = "Realtime speech-to-text with Faster-Whisper, focused on StreamDeck integration"
 readme = "README.md"
-requires-python = ">=3.9, <3.11"
+requires-python = ">=3.9, <=3.12.3"
 license = { text = "MIT" }
 authors = [
     { name = "rationallyprime" }
@@ -26,8 +26,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "black>=23.0.0",
     "ruff>=0.1.0",
+    "basedpyright>=1.0.0",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -36,9 +36,16 @@ packages = ["rt_whisper"]
 [tool.ruff]
 line-length = 100
 
-[tool.black]
-line-length = 100
-target-version = ["py39", "py310"]
+[tool.pyright]
+include = ["rt_whisper"]
+typeCheckingMode = "basic"
+pythonVersion = "3.12"
+reportMissingTypeStubs = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportUnknownParameterType = false
+reportPrivateUsage = false
 
-[tool.hatch.build.hooks.vcs]
-version-file = "rt_whisper/_version.py" 
+# Temporarily commenting out until we fix the vcs hook issue
+# [tool.hatch.build.hooks.vcs]
+# version-file = "rt_whisper/_version.py" 

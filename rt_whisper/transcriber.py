@@ -37,6 +37,10 @@ log_file = log_dir / "rt_whisper.log"
 log_dir.mkdir(exist_ok=True, mode=0o755)
 
 # Configure logging with RotatingFileHandler
+# First reset the root logger to handle Python 3.12 deprecation of force=True
+for handler in logging.root.handlers[:]:
+    logging.root.removeHandler(handler)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -47,8 +51,7 @@ logging.basicConfig(
             backupCount=5,
             encoding="utf-8",
         )
-    ],
-    force=True,  # Ensure our configuration takes precedence
+    ]
 )
 
 # Directory setup
@@ -268,6 +271,43 @@ class WhisperTranscriber:
                     self.temp_file.unlink()
             print("\a")  # System beep
             
+    def _run_async_safely(self, coro):
+        """Run an async coroutine safely, compatible with Python 3.12+.
+        
+        Args:
+            coro: The coroutine to run
+        """
+        try:
+            # In Python 3.12+, asyncio.run() creates a new event loop when needed
+            # and handles the closure of the loop more reliably
+            import sys
+            if sys.version_info >= (3, 12):
+                # Python 3.12+ approach - simpler and more reliable
+                return asyncio.run(coro)
+            else:
+                # Backwards compatibility for older Python versions
+                try:
+                    loop = asyncio.get_running_loop()
+                    if loop.is_closed():
+                        raise RuntimeError("Event loop is closed")
+                    # We're in an existing loop context, need custom handling
+                    future = asyncio.ensure_future(coro, loop=loop)
+                    return loop.run_until_complete(future)
+                except RuntimeError:
+                    # No running event loop, create a new one
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        return loop.run_until_complete(coro)
+                    finally:
+                        try:
+                            loop.close()
+                        except Exception as e:
+                            logging.warning(f"Error closing event loop: {e}")
+        except Exception as e:
+            logging.error(f"Error running async operation: {e}")
+            return None
+            
     async def process_with_claude(self, prefix: Optional[str] = None):
         """Process clipboard content with Claude.
         
@@ -322,42 +362,42 @@ class WhisperTranscriber:
             elif command == "stop_recording" and self.is_recording:
                 self.stop_recording()
             elif command == "process_clipboard" and self.claude_client:
-                asyncio.run(self.process_with_claude())
+                self._run_async_safely(self.process_with_claude())
             elif command == "explain_clipboard" and self.claude_client:
                 text = pyperclip.paste()
                 if text:
                     pyperclip.copy(f"explain this: {text}")
-                    asyncio.run(self.process_with_claude())
+                    self._run_async_safely(self.process_with_claude())
             elif command == "summarize_clipboard" and self.claude_client:
                 text = pyperclip.paste()
                 if text:
                     pyperclip.copy(f"summarize this: {text}")
-                    asyncio.run(self.process_with_claude())
+                    self._run_async_safely(self.process_with_claude())
             elif command == "promptify_clipboard" and self.claude_client:
                 text = pyperclip.paste()
                 if text:
                     pyperclip.copy(f"promptify this: {text}")
-                    asyncio.run(self.process_with_claude())
+                    self._run_async_safely(self.process_with_claude())
             elif command == "reformat_clipboard" and self.claude_client:
                 text = pyperclip.paste()
                 if text:
                     pyperclip.copy(f"reformat this: {text}")
-                    asyncio.run(self.process_with_claude())
+                    self._run_async_safely(self.process_with_claude())
             elif command == "implement_clipboard" and self.claude_client:
                 text = pyperclip.paste()
                 if text:
                     pyperclip.copy(f"implement this: {text}")
-                    asyncio.run(self.process_with_claude())
+                    self._run_async_safely(self.process_with_claude())
             elif command == "command_clipboard" and self.claude_client:
                 text = pyperclip.paste()
                 if text:
                     pyperclip.copy(f"command line this: {text}")
-                    asyncio.run(self.process_with_claude())
+                    self._run_async_safely(self.process_with_claude())
             elif command == "translate_clipboard" and self.claude_client:
                 text = pyperclip.paste()
                 if text:
                     pyperclip.copy(f"translate this into English: {text}")
-                    asyncio.run(self.process_with_claude())
+                    self._run_async_safely(self.process_with_claude())
             
             command_file.unlink()
         except Exception as e:
