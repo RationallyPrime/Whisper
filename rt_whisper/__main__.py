@@ -39,7 +39,7 @@ def parse_args():
         type=str, 
         default="large-v3",
         choices=["tiny", "base", "small", "medium", "large-v1", "large-v2", "large-v3", "distil-large-v3"],
-        help="Faster-Whisper model to use"
+        help="Faster-Whisper model to use. Smaller models like 'tiny', 'base', 'small' use less VRAM. 'large-v3' is the most VRAM intensive but most accurate."
     )
     
     parser.add_argument(
@@ -47,7 +47,7 @@ def parse_args():
         type=str, 
         default="cuda", 
         choices=["cuda", "cpu"],
-        help="Device to use for inference"
+        help="Device to use for inference. 'cuda' utilizes NVIDIA GPUs (requires VRAM), 'cpu' runs on the CPU (slower, but avoids VRAM issues)."
     )
     
     parser.add_argument(
@@ -55,7 +55,7 @@ def parse_args():
         type=str, 
         default="float16", 
         choices=["float16", "float32", "int8", "int8_float16"],
-        help="Compute type for inference"
+        help="Compute type for inference. 'int8' or 'int8_float16' can significantly reduce VRAM usage and improve speed on compatible GPUs, with a minor potential accuracy trade-off. 'float16' is a good balance. 'float32' uses the most VRAM."
     )
     
     parser.add_argument(
@@ -96,6 +96,13 @@ def main():
     
     # Parse the cache directory
     cache_dir = Path(args.cache_dir) if args.cache_dir else None
+
+    # Display VRAM guidance if using CUDA
+    if args.device_type == "cuda":
+        print("\nINFO: Using CUDA for transcription. To manage VRAM usage:")
+        print("  - Consider using smaller models with --model (e.g., 'small', 'medium').")
+        print("  - Try quantized compute types like --compute-type int8_float16 or int8.")
+        print(f"  - Current model: {args.model}, Compute type: {args.compute_type}\n")
     
     # Initialize the transcriber
     transcriber = WhisperTranscriber(

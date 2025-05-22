@@ -97,6 +97,7 @@ class WhisperTranscriber:
         self.is_recording = False
         self.audio_queue = queue.Queue()
         self.recording_data: List[np.ndarray] = []
+        self.sound_file = None
         self.recording_thread: Optional[threading.Thread] = None
         
         # Set up the cache directory
@@ -198,8 +199,11 @@ class WhisperTranscriber:
                     except queue.Empty:
                         pass
 
-                    if audio_chunks:
-                        self.recording_data.append(np.concatenate(audio_chunks))
+                    if audio_chunks and self.sound_file:
+                        try:
+                            self.sound_file.write(np.concatenate(audio_chunks))
+                        except Exception as e:
+                            logging.error(f"Error writing to sound file: {e}")
         except Exception as e:
             logging.error(f"Recording error: {e}")
             self.is_recording = False
@@ -235,6 +239,22 @@ class WhisperTranscriber:
         """Start recording in a new thread."""
         if not self.is_recording:
             self.is_recording = True
+            self.recording_data.clear() # Clear previous recording data
+
+            # Open the sound file for writing
+            try:
+                self.sound_file = sf.SoundFile(
+                    self.temp_file,
+                    mode='w',
+                    samplerate=self.audio_config.samplerate,
+                    channels=self.audio_config.channels,
+                    subtype='PCM_16'  # Assuming PCM_16, adjust if necessary
+                )
+            except Exception as e:
+                logging.error(f"Failed to open sound file: {e}")
+                self.is_recording = False
+                return
+            
             self.recording_thread = threading.Thread(target=self.record_audio)
             self.recording_thread.start()
             logging.info("Recording started")
@@ -247,14 +267,22 @@ class WhisperTranscriber:
             if self.recording_thread:
                 self.recording_thread.join()
 
-            if not self.recording_data:
-                logging.warning("No audio data recorded")
+            # Close the sound file
+            if self.sound_file:
+                self.sound_file.close()
+                self.sound_file = None
+
+            # Check if any audio data was recorded
+            # A WAV file header is typically 44 bytes.
+            # If the file size is less than or equal to this, assume no audio data.
+            if not self.temp_file.exists() or self.temp_file.stat().st_size <= 44:
+                logging.warning("No audio data recorded or file is empty.")
+                # Clean up the empty temp file
+                if self.temp_file.exists():
+                    self.temp_file.unlink()
                 return
 
             try:
-                full_audio = np.concatenate(self.recording_data)
-                sf.write(self.temp_file, full_audio, self.audio_config.samplerate)
-
                 transcribed_text = self.transcribe_audio(self.temp_file)
 
                 if transcribed_text:
