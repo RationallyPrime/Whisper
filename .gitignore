@@ -15,3 +15,9 @@ archive/*
 __pycache__/
 *.py[cod]
 *$py.class
+
+# Friendship memories
+friendship_memories/
+our_friendship_memories.json
+friendship_graph.json
+friendship_curation.log
