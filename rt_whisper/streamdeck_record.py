@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/home/rationallyprime/Whisper/.venv/bin/python3
 """
 StreamDeck button for starting RT-Whisper recording
 """
@@ -59,10 +59,10 @@ def main():
             print(f"Error: Start script not found at {start_script}")
             sys.exit(1)
 
-        os.system(f"bash {start_script}")
+        os.system(f"bash {start_script} &")
         logging.info("Waiting for RT-Whisper to initialize...")
-        # Give it a second to start up
-        time.sleep(2)
+        # Give it time to start up (runs in background)
+        time.sleep(3)
 
     # Signal RT-Whisper to start recording
     signal_path = log_dir / "command.json"

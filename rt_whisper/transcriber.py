@@ -8,7 +8,7 @@ import queue
 import warnings
 import soundfile as sf
 import pyperclip
-from pynput import keyboard
+# pynput imported lazily only in legacy hotkey mode
 import threading
 import torch
 from typing import Optional, Dict, Any, List
@@ -70,7 +70,7 @@ class AudioConfig:
     channels: int = 1
     dtype: np.dtype = np.float32
     device: Optional[int] = None
-    blocksize: int = 2048 * 4
+    blocksize: int = 2048 * 8
 
 
 class WhisperTranscriber:
@@ -180,13 +180,13 @@ class WhisperTranscriber:
     def record_audio(self) -> None:
         """Record audio in a separate thread."""
         self.recording_data.clear()
-        logging.info("Recording started...")
 
         try:
             with sd.InputStream(
                 samplerate=self.audio_config.samplerate,
                 channels=self.audio_config.channels,
                 dtype=self.audio_config.dtype,
+                device=self.audio_config.device,
                 blocksize=self.audio_config.blocksize,
                 callback=self.audio_callback,
             ):
@@ -200,6 +200,7 @@ class WhisperTranscriber:
 
                     if audio_chunks:
                         self.recording_data.append(np.concatenate(audio_chunks))
+                    time.sleep(0.01)  # Reduce CPU churn
         except Exception as e:
             logging.error(f"Recording error: {e}")
             self.is_recording = False
@@ -260,17 +261,29 @@ class WhisperTranscriber:
                 if transcribed_text:
                     pyperclip.copy(transcribed_text)
                     logging.info(f"Transcribed and copied to clipboard: {transcribed_text}")
+                    self._play_beep(660, 0.1)  # Success beep
                 else:
                     logging.warning("No text transcribed")
+                    self._play_beep(330, 0.2)  # Lower pitch for no text
 
             except Exception as e:
                 logging.error(f"Processing error: {e}")
+                self._play_beep(220, 0.3)  # Error beep
             finally:
                 # Cleanup temp file
                 if self.temp_file.exists():
                     self.temp_file.unlink()
-            print("\a")  # System beep
             
+    def _play_beep(self, frequency: int = 440, duration: float = 0.1):
+        """Play a beep sound."""
+        try:
+            t = np.linspace(0, duration, int(44100 * duration))
+            beep = np.sin(2 * np.pi * frequency * t) * 0.3
+            sd.play(beep, 44100)
+            sd.wait()
+        except Exception as e:
+            logging.warning(f"Could not play beep: {e}")
+
     def _run_async_safely(self, coro):
         """Run an async coroutine safely, compatible with Python 3.12+.
         
@@ -330,14 +343,6 @@ class WhisperTranscriber:
         except Exception as e:
             logging.error(f"Claude processing error: {e}")
 
-    def on_press(self, key: keyboard.Key) -> None:
-        """Legacy method for keyboard shortcuts - maintained for backward compatibility."""
-        pass
-            
-    def on_release(self, key: keyboard.Key) -> None:
-        """Legacy method for keyboard shortcuts - maintained for backward compatibility."""
-        pass
-    
     def check_for_commands(self):
         """Check for command files and execute them."""
         command_file = Path.home() / ".whisper_logs" / "command.json"
@@ -417,24 +422,6 @@ class WhisperTranscriber:
             if self.is_recording:
                 self.stop_recording()
 
-    def run(self, command_mode=False) -> None:
-        """Main execution loop."""
-        if command_mode:
-            self.run_command_mode()
-            return
-            
-        # Legacy hotkey mode - kept for backward compatibility
-        logging.info("""
-RT-Whisper started in legacy hotkey mode. 
-Consider using command mode with StreamDeck for better reliability.
-
-Press 'Ctrl+C' to exit
-""")
-
-        with keyboard.Listener(on_press=self.on_press, on_release=self.on_release) as listener:
-            try:
-                listener.join()
-            except KeyboardInterrupt:
-                logging.info("Shutting down...")
-                if self.is_recording:
-                    self.stop_recording() 
+    def run(self, command_mode: bool = True) -> None:
+        """Main execution loop. Runs in command mode (file-based IPC)."""
+        self.run_command_mode() 

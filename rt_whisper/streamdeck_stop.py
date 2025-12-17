@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/home/rationallyprime/Whisper/.venv/bin/python3
 """
 StreamDeck button for stopping RT-Whisper recording
 """

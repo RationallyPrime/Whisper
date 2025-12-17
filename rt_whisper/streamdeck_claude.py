@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/home/rationallyprime/Whisper/.venv/bin/python3
 """Send a command to process clipboard content with Claude in RT-Whisper command mode."""
 
 import json

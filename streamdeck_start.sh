@@ -25,9 +25,13 @@ else
     echo "Run: pip install nvidia-cublas-cu12 nvidia-cudnn-cu12==9.*"
 fi
 
+# Detect Yeti Nano device ID dynamically
+YETI_DEVICE=$(python -c 'import sounddevice as sd; devices = sd.query_devices(); yeti = [i for i, d in enumerate(devices) if "Yeti" in d["name"] and d["max_input_channels"] > 0]; print(yeti[0] if yeti else 5)' 2>/dev/null)
+echo "Detected Yeti Nano at device ID: $YETI_DEVICE"
+
 # Run RT-Whisper in command mode in the background with specific settings for StreamDeck
 echo "Starting RT-Whisper in command mode with optimal settings..."
-nohup python -m rt_whisper --device-type cuda --compute-type float16 --command-mode > "$LOGS_DIR/rt_whisper_stdout.log" 2>&1 &
+nohup python -m rt_whisper --device "$YETI_DEVICE" --device-type cuda --compute-type float16 --command-mode > "$LOGS_DIR/rt_whisper_stdout.log" 2>&1 &
 
 # Save the process ID for future termination
 PID=$!
