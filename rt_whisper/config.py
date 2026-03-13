@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -13,14 +13,14 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
-class DeviceType(str, Enum):
+class DeviceType(StrEnum):
     """Inference device type."""
 
     CUDA = "cuda"
     CPU = "cpu"
 
 
-class ComputeType(str, Enum):
+class ComputeType(StrEnum):
     """Inference compute type."""
 
     FLOAT16 = "float16"
@@ -61,9 +61,7 @@ class TranscriptionConfig(BaseModel):
     compute_type: ComputeType = ComputeType.FLOAT16
     beam_size: int = 3
     vad_filter: bool = True
-    vad_parameters: dict[str, Any] = Field(
-        default_factory=lambda: {"min_silence_duration_ms": 500}
-    )
+    vad_parameters: dict[str, Any] = Field(default_factory=lambda: {"min_silence_duration_ms": 500})
     language: str = "en"
     cache_dir: Path = Field(default_factory=lambda: Path.home() / ".whisper_cache")
 
@@ -86,9 +84,7 @@ class TranscriptionConfig(BaseModel):
                         "Set device_type to 'cpu' or install CUDA."
                     )
             except ImportError:
-                raise ValueError(
-                    "device_type is 'cuda' but torch is not installed."
-                ) from None
+                raise ValueError("device_type is 'cuda' but torch is not installed.") from None
         return self
 
 

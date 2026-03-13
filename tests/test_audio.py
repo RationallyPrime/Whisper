@@ -29,13 +29,17 @@ class TestPlayBeep:
         assert args[0][1] == 96000  # samplerate argument
 
     @patch("rt_whisper.audio.sd")
-    def test_beep_default_samplerate_48k(self, mock_sd: MagicMock, audio_capture: AudioCapture) -> None:
+    def test_beep_default_samplerate_48k(
+        self, mock_sd: MagicMock, audio_capture: AudioCapture
+    ) -> None:
         audio_capture.play_beep()
         args = mock_sd.play.call_args
         assert args[0][1] == 48000
 
     @patch("rt_whisper.audio.sd")
-    def test_beep_generates_correct_frequency(self, mock_sd: MagicMock, audio_capture: AudioCapture) -> None:
+    def test_beep_generates_correct_frequency(
+        self, mock_sd: MagicMock, audio_capture: AudioCapture
+    ) -> None:
         audio_capture.play_beep(880, 0.1)
         beep_data = mock_sd.play.call_args[0][0]
         assert isinstance(beep_data, np.ndarray)

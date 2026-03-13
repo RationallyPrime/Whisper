@@ -6,20 +6,20 @@ import asyncio
 import json
 import logging
 import time
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pyperclip
 
-from .config import DaemonConfig
-
 if TYPE_CHECKING:
+    from pathlib import Path
+
+    from .config import DaemonConfig
     from .protocols import Recorder, TextProcessor, Transcriber
 
 logger = logging.getLogger(__name__)
 
 # Maps command names to the prefix prepended to clipboard text before Claude processing.
-# Commands not in this map are handled directly (start_recording, stop_recording, process_clipboard).
+# Commands not in this map are handled directly (start/stop recording, process_clipboard).
 _COMMAND_PREFIX_MAP: dict[str, str] = {
     "explain_clipboard": "explain this",
     "summarize_clipboard": "summarize this",

@@ -3,12 +3,12 @@
 StreamDeck button for starting RT-Whisper recording
 """
 
+import json
+import logging
 import os
 import sys
 import time
 from pathlib import Path
-import logging
-import json
 
 # Configure logging
 log_dir = Path.home() / ".whisper_logs"

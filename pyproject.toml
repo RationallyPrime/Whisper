@@ -43,6 +43,9 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "TCH"]
 
+[tool.ruff.lint.per-file-ignores]
+"rt_whisper/prompts.py" = ["E501"]
+
 [tool.ruff.format]
 quote-style = "double"
 

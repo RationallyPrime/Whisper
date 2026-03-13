@@ -2,9 +2,10 @@
 """
 StreamDeck button for stopping RT-Whisper recording
 """
-from pathlib import Path
-import logging
+
 import json
+import logging
+from pathlib import Path
 
 # Configure logging
 log_dir = Path.home() / ".whisper_logs"
@@ -21,17 +22,20 @@ logging.basicConfig(
     filemode="a",
 )
 
+
 def main():
     """Stop recording with RT-Whisper"""
     # Signal RT-Whisper to stop recording
     signal_path = log_dir / "command.json"
-    
+
     import time
+
     with open(signal_path, "w") as f:
         json.dump({"command": "stop_recording", "timestamp": time.time()}, f)
-    
+
     logging.info("Stop recording command sent")
     print("Recording stopped. Transcribing...")
+
 
 if __name__ == "__main__":
     try:

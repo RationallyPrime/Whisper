@@ -6,14 +6,16 @@ import logging
 import queue
 import threading
 import time
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import sounddevice as sd
 import soundfile as sf
 
-from .config import AudioConfig
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from .config import AudioConfig
 
 logger = logging.getLogger(__name__)
 

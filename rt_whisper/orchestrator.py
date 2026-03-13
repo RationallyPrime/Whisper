@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import TYPE_CHECKING
 
-from .commands import CommandHandler
-from .config import WhisperConfig
+if TYPE_CHECKING:
+    from .commands import CommandHandler
+    from .config import WhisperConfig
 
 logger = logging.getLogger(__name__)
 

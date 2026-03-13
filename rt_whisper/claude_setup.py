@@ -14,7 +14,13 @@ from .prompts import SYSTEM_PROMPTS
 def validate_prompts() -> bool:
     """Validate that all required prompts are present and well-formed."""
     required_prompts = [
-        "promptify", "reformat", "implement", "command", "explain", "translate", "summarize"
+        "promptify",
+        "reformat",
+        "implement",
+        "command",
+        "explain",
+        "translate",
+        "summarize",
     ]
     missing_prompts = [p for p in required_prompts if p not in SYSTEM_PROMPTS]
 
@@ -60,11 +66,13 @@ def setup_claude() -> None:
         except (json.JSONDecodeError, OSError):
             config = {}
 
-    config.update({
-        "enable_claude": True,
-        "anthropic_api_key": api_key,
-        "available_commands": list(SYSTEM_PROMPTS.keys()),
-    })
+    config.update(
+        {
+            "enable_claude": True,
+            "anthropic_api_key": api_key,
+            "available_commands": list(SYSTEM_PROMPTS.keys()),
+        }
+    )
 
     with open(config_path, "w") as f:
         json.dump(config, f, indent=2)

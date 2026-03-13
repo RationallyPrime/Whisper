@@ -6,7 +6,13 @@ from pathlib import Path
 
 import pytest
 
-from rt_whisper.config import AudioConfig, ClaudeConfig, DaemonConfig, TranscriptionConfig, WhisperConfig
+from rt_whisper.config import (
+    AudioConfig,
+    ClaudeConfig,
+    DaemonConfig,
+    TranscriptionConfig,
+    WhisperConfig,
+)
 from rt_whisper.protocols import Recorder, TextProcessor, Transcriber
 
 

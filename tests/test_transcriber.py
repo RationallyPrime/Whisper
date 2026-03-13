@@ -45,7 +45,9 @@ class TestTranscribeAudio:
         )
 
     @patch("rt_whisper.transcriber.WhisperModel")
-    def test_transcription_error_returns_failure_string(self, MockModel: MagicMock, tmp_path: Path) -> None:
+    def test_transcription_error_returns_failure_string(
+        self, MockModel: MagicMock, tmp_path: Path
+    ) -> None:
         config = TranscriptionConfig(
             model="tiny",
             device_type="cpu",

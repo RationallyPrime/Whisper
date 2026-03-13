@@ -106,11 +106,17 @@ class TestWhisperConfig:
     def test_load_full_config(self, tmp_path: Path) -> None:
         config_file = tmp_path / "config.json"
         config_file.write_text(
-            json.dumps({
-                "audio": {"samplerate": 96000, "channels": 2},
-                "transcription": {"model": "tiny", "device_type": "cpu", "compute_type": "float32"},
-                "claude": {"enable": False},
-            })
+            json.dumps(
+                {
+                    "audio": {"samplerate": 96000, "channels": 2},
+                    "transcription": {
+                        "model": "tiny",
+                        "device_type": "cpu",
+                        "compute_type": "float32",
+                    },
+                    "claude": {"enable": False},
+                }
+            )
         )
         cfg = WhisperConfig.load(config_path=config_file)
         assert cfg.audio.samplerate == 96000
@@ -135,10 +141,12 @@ class TestWhisperConfig:
     def test_backward_compat_flat_keys(self, tmp_path: Path) -> None:
         config_file = tmp_path / "config.json"
         config_file.write_text(
-            json.dumps({
-                "enable_claude": True,
-                "anthropic_api_key": "sk-legacy",
-            })
+            json.dumps(
+                {
+                    "enable_claude": True,
+                    "anthropic_api_key": "sk-legacy",
+                }
+            )
         )
         cfg = WhisperConfig.load(config_path=config_file)
         assert cfg.claude.enable is True

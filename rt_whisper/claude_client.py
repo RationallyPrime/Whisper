@@ -9,10 +9,10 @@ from typing import TYPE_CHECKING
 import pyperclip
 from anthropic import AsyncAnthropic
 
-from .config import ClaudeConfig
 from .prompts import SYSTEM_PROMPTS
 
 if TYPE_CHECKING:
+    from .config import ClaudeConfig
     from .protocols import Recorder
 
 logger = logging.getLogger(__name__)

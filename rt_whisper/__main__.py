@@ -6,8 +6,10 @@ import argparse
 import logging
 import warnings
 from logging.handlers import RotatingFileHandler
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 import sounddevice as sd
 

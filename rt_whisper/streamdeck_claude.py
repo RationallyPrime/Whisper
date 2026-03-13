@@ -1,13 +1,13 @@
 #!/usr/bin/env -S uv run python
 """Send a command to process clipboard content with Claude in RT-Whisper command mode."""
 
-import json
-import time
-import sys
 import argparse
-from pathlib import Path
+import json
 import logging
+import sys
+import time
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 # Configure logging
 log_dir = Path.home() / ".whisper_logs"
@@ -31,6 +31,7 @@ logging.basicConfig(
     ],
 )
 
+
 def send_command(command):
     """Send a command to RT-Whisper by writing to the command file."""
     command_file = log_dir / "command.json"
@@ -38,7 +39,7 @@ def send_command(command):
         "command": command,
         "timestamp": time.time(),
     }
-    
+
     try:
         with open(command_file, "w") as f:
             json.dump(command_data, f)
@@ -50,24 +51,34 @@ def send_command(command):
         print(f"Error: {e}")
         return False
 
+
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Send commands to Claude via RT-Whisper")
     parser.add_argument("--explain", action="store_true", help="Explain the clipboard content")
     parser.add_argument("--summarize", action="store_true", help="Summarize the clipboard content")
-    parser.add_argument("--promptify", action="store_true", help="Convert clipboard content to a prompt")
+    parser.add_argument(
+        "--promptify", action="store_true", help="Convert clipboard content to a prompt"
+    )
     parser.add_argument("--reformat", action="store_true", help="Reformat the clipboard content")
-    parser.add_argument("--implement", action="store_true", help="Implement code from clipboard content")
-    parser.add_argument("--command", action="store_true", help="Generate command line from clipboard content")
-    parser.add_argument("--translate", action="store_true", help="Translate clipboard content to English")
+    parser.add_argument(
+        "--implement", action="store_true", help="Implement code from clipboard content"
+    )
+    parser.add_argument(
+        "--command", action="store_true", help="Generate command line from clipboard content"
+    )
+    parser.add_argument(
+        "--translate", action="store_true", help="Translate clipboard content to English"
+    )
     return parser.parse_args()
+
 
 if __name__ == "__main__":
     args = parse_args()
-    
+
     # Default command
     command = "process_clipboard"
-    
+
     # Check for command-line arguments using argparse
     if args.explain:
         command = "explain_clipboard"
@@ -84,7 +95,7 @@ if __name__ == "__main__":
     elif args.translate:
         command = "translate_clipboard"
     # Also support the old positional argument style
-    elif len(sys.argv) > 1 and not sys.argv[1].startswith('--'):
+    elif len(sys.argv) > 1 and not sys.argv[1].startswith("--"):
         action = sys.argv[1].lower()
         if action == "explain":
             command = "explain_clipboard"
@@ -100,6 +111,6 @@ if __name__ == "__main__":
             command = "command_clipboard"
         elif action == "translate":
             command = "translate_clipboard"
-    
+
     logging.info(f"StreamDeck: Sending {command} command")
     send_command(command)

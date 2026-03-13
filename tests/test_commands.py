@@ -43,13 +43,13 @@ def handler(
 def _write_command(log_dir: Path, command: str, age: float = 0) -> None:
     """Helper to write a command.json file."""
     command_file = log_dir / "command.json"
-    command_file.write_text(
-        json.dumps({"command": command, "timestamp": time.time() - age})
-    )
+    command_file.write_text(json.dumps({"command": command, "timestamp": time.time() - age}))
 
 
 class TestCommandParsing:
-    def test_start_recording(self, handler: CommandHandler, daemon_config: DaemonConfig, fake_recorder: FakeRecorder) -> None:
+    def test_start_recording(
+        self, handler: CommandHandler, daemon_config: DaemonConfig, fake_recorder: FakeRecorder
+    ) -> None:
         _write_command(daemon_config.log_dir, "start_recording")
         handler.check_for_commands()
         assert fake_recorder.start_count == 1
@@ -59,17 +59,23 @@ class TestCommandParsing:
         # Should not raise
         handler.check_for_commands()
 
-    def test_expired_command_ignored(self, handler: CommandHandler, daemon_config: DaemonConfig, fake_recorder: FakeRecorder) -> None:
+    def test_expired_command_ignored(
+        self, handler: CommandHandler, daemon_config: DaemonConfig, fake_recorder: FakeRecorder
+    ) -> None:
         _write_command(daemon_config.log_dir, "start_recording", age=10)
         handler.check_for_commands()
         assert fake_recorder.start_count == 0
 
-    def test_command_file_removed_after_processing(self, handler: CommandHandler, daemon_config: DaemonConfig) -> None:
+    def test_command_file_removed_after_processing(
+        self, handler: CommandHandler, daemon_config: DaemonConfig
+    ) -> None:
         _write_command(daemon_config.log_dir, "start_recording")
         handler.check_for_commands()
         assert not (daemon_config.log_dir / "command.json").exists()
 
-    def test_unknown_command_does_nothing(self, handler: CommandHandler, daemon_config: DaemonConfig, fake_recorder: FakeRecorder) -> None:
+    def test_unknown_command_does_nothing(
+        self, handler: CommandHandler, daemon_config: DaemonConfig, fake_recorder: FakeRecorder
+    ) -> None:
         _write_command(daemon_config.log_dir, "unknown_command")
         handler.check_for_commands()
         assert fake_recorder.start_count == 0

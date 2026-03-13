@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from faster_whisper import WhisperModel
 
-from .config import TranscriptionConfig
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from .config import TranscriptionConfig
 
 logger = logging.getLogger(__name__)
 
