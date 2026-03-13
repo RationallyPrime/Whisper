@@ -13,6 +13,7 @@ verdict_processor.py
 verdict_section_processor.py
 archive/*
 __pycache__/
+.worktrees/
 *.py[cod]
 *$py.class
 
