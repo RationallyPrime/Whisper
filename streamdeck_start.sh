@@ -26,9 +26,9 @@ fi
 YETI_DEVICE=$(uv run python -c 'import sounddevice as sd; devices = sd.query_devices(); yeti = [i for i, d in enumerate(devices) if "Yeti" in d["name"] and d["max_input_channels"] > 0]; print(yeti[0] if yeti else 5)' 2>/dev/null)
 echo "Detected Yeti Nano at device ID: $YETI_DEVICE"
 
-# Run RT-Whisper in the background
+# Run RT-Whisper in the background via rtwhisperctl
 echo "Starting RT-Whisper with optimal settings..."
-nohup uv run python -m rt_whisper --device "$YETI_DEVICE" --device-type cuda --compute-type float16 > "$LOGS_DIR/rt_whisper_stdout.log" 2>&1 &
+nohup uv run rtwhisperctl daemon --device "$YETI_DEVICE" --device-type cuda --compute-type float16 > "$LOGS_DIR/rt_whisper_stdout.log" 2>&1 &
 
 # Save the process ID for future termination
 PID=$!
@@ -36,4 +36,4 @@ echo $PID > "$LOGS_DIR/rt_whisper.pid"
 
 echo "RT-Whisper started in background (PID: $PID)."
 echo "Output logs: $LOGS_DIR/rt_whisper_stdout.log"
-echo "Use streamdeck_kill.sh to stop it."
+echo "Use streamdeck_kill.sh or 'just kill' to stop it."

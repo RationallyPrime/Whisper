@@ -40,10 +40,15 @@ def handler(
     )
 
 
-def _write_command(log_dir: Path, command: str, age: float = 0) -> None:
+def _write_command(
+    log_dir: Path, command: str, age: float = 0, command_id: str | None = None
+) -> None:
     """Helper to write a command.json file."""
     command_file = log_dir / "command.json"
-    command_file.write_text(json.dumps({"command": command, "timestamp": time.time() - age}))
+    data: dict[str, object] = {"command": command, "timestamp": time.time() - age}
+    if command_id is not None:
+        data["command_id"] = command_id
+    command_file.write_text(json.dumps(data))
 
 
 class TestCommandParsing:
@@ -158,3 +163,65 @@ class TestClaudeCommands:
             handler.check_for_commands()
         mock_clip.copy.assert_called_once_with(f"{expected_prefix}: some text")
         assert fake_text_processor.process_count == 1
+
+
+class TestStatusAckIPC:
+    def test_status_written_after_start(
+        self, handler: CommandHandler, daemon_config: DaemonConfig
+    ) -> None:
+        _write_command(daemon_config.log_dir, "start_recording")
+        handler.check_for_commands()
+        status_path = daemon_config.log_dir / "status.json"
+        assert status_path.exists()
+        data = json.loads(status_path.read_text())
+        assert data["is_recording"] is True
+        assert data["last_command"] == "start_recording"
+
+    def test_ack_written_with_command_id(
+        self, handler: CommandHandler, daemon_config: DaemonConfig
+    ) -> None:
+        _write_command(daemon_config.log_dir, "start_recording", command_id="test-id-123")
+        handler.check_for_commands()
+        ack_path = daemon_config.log_dir / "ack.json"
+        assert ack_path.exists()
+        data = json.loads(ack_path.read_text())
+        assert data["command_id"] == "test-id-123"
+        assert data["command"] == "start_recording"
+        assert data["success"] is True
+
+    def test_no_ack_without_command_id(
+        self, handler: CommandHandler, daemon_config: DaemonConfig
+    ) -> None:
+        _write_command(daemon_config.log_dir, "start_recording")
+        handler.check_for_commands()
+        ack_path = daemon_config.log_dir / "ack.json"
+        assert not ack_path.exists()
+
+    def test_ack_on_error(self, handler: CommandHandler, daemon_config: DaemonConfig) -> None:
+        # Write invalid JSON to trigger error path
+        cmd_file = daemon_config.log_dir / "command.json"
+        cmd_file.write_text("{invalid json")
+        handler.check_for_commands()
+        # Command file should be cleaned up even on error
+        assert not cmd_file.exists()
+
+    def test_status_reflects_stop(
+        self,
+        handler: CommandHandler,
+        daemon_config: DaemonConfig,
+        fake_recorder: FakeRecorder,
+        tmp_path: Path,
+    ) -> None:
+        wav = tmp_path / "test.wav"
+        wav.write_text("fake audio")
+        fake_recorder.set_wav_path(wav)
+        fake_recorder.start_recording()
+
+        _write_command(daemon_config.log_dir, "stop_recording")
+        with patch("rt_whisper.commands.pyperclip"):
+            handler.check_for_commands()
+
+        status_path = daemon_config.log_dir / "status.json"
+        data = json.loads(status_path.read_text())
+        assert data["is_recording"] is False
+        assert data["last_command"] == "stop_recording"

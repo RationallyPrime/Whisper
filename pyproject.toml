@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "rt-whisper"
-version = "0.3.0"
-description = "Realtime speech-to-text with Faster-Whisper, focused on StreamDeck integration"
+version = "0.4.0"
+description = "Realtime speech-to-text with Faster-Whisper and hands-free dictation control"
 requires-python = ">=3.12"
 license = { text = "MIT" }
 authors = [
@@ -33,6 +33,9 @@ dev = [
     "hypothesis>=6.0",
 ]
 
+[project.scripts]
+rtwhisperctl = "rt_whisper.ctl:main"
+
 [tool.hatch.build.targets.wheel]
 packages = ["rt_whisper"]
 
@@ -45,6 +48,7 @@ select = ["E", "F", "I", "UP", "B", "SIM", "TCH"]
 
 [tool.ruff.lint.per-file-ignores]
 "rt_whisper/prompts.py" = ["E501"]
+"tests/**" = ["TCH"]
 
 [tool.ruff.format]
 quote-style = "double"

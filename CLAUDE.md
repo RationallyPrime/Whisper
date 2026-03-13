@@ -4,13 +4,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 - Setup: `uv sync && just install-audio-config`
-- Run: `just dev`
-- Kill: `just kill`
+- Start daemon: `just start` (background) or `just dev` (foreground)
+- Stop daemon: `just kill`
+- Toggle dictation: `just toggle`
+- Check status: `just status`
 - Lint: `just lint`
 - Format: `just fmt`
 - Type check: `just check`
 - Test: `just test`
 - List devices: `just dev --list-devices`
+- Show keyboard shortcuts: `just shortcuts`
+
+## Architecture
+- `rtwhisperctl` is the primary CLI entry point (console_script)
+- Daemon polls `~/.whisper_logs/command.json` for commands
+- Status IPC via `~/.whisper_logs/status.json` (atomic writes)
+- Ack IPC via `~/.whisper_logs/ack.json` (for --wait flag)
+- StreamDeck scripts still work but are no longer the primary interface
 
 ## Code Style
 - Line length: 100 characters

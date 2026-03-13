@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from typing import TYPE_CHECKING
 
@@ -22,7 +23,17 @@ class Orchestrator:
 
     def run(self) -> None:
         """Poll for commands until interrupted."""
+        from .commands import write_status
+
         logger.info("RT-Whisper started in command mode.")
+
+        write_status(
+            self._config.daemon.log_dir,
+            is_recording=False,
+            pid=os.getpid(),
+            started_at=time.time(),
+        )
+
         try:
             while True:
                 self._command_handler.check_for_commands()
