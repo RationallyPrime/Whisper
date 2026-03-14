@@ -32,7 +32,7 @@ if [ -f "$PID_FILE" ]; then
 else
     echo "No PID file found at $PID_FILE." >> "$LOGS_DIR/streamdeck.log"
     echo "Looking for any RT-Whisper processes..." >> "$LOGS_DIR/streamdeck.log"
-    pkill -f "python.*rt_whisper"
+    pkill -f "rt_whisper|rtwhisperctl daemon"
     
     # Check if any processes were found and killed
     if [ $? -eq 0 ]; then
@@ -44,5 +44,5 @@ else
     fi
 fi
 
-# Clean up any command files
-rm -f "$LOGS_DIR/command.json" 2>/dev/null
+# Clean up IPC files
+rm -f "$LOGS_DIR/command.json" "$LOGS_DIR/status.json" "$LOGS_DIR/ack.json" 2>/dev/null

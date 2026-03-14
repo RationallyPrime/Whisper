@@ -55,8 +55,12 @@ def list_audio_devices() -> None:
     print("-" * 50)
 
 
-def parse_args() -> argparse.Namespace:
-    """Parse command line arguments."""
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command line arguments.
+
+    Args:
+        argv: Argument list to parse. Defaults to sys.argv[1:].
+    """
     parser = argparse.ArgumentParser(description="Real-time Whisper Transcription")
 
     parser.add_argument(
@@ -103,7 +107,7 @@ def parse_args() -> argparse.Namespace:
         help="Enable debug logging",
     )
 
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def _build_cli_overrides(args: argparse.Namespace) -> dict[str, Any]:
@@ -122,9 +126,13 @@ def _build_cli_overrides(args: argparse.Namespace) -> dict[str, Any]:
     return overrides
 
 
-def main() -> None:
-    """Main entry point — DI wiring and run."""
-    args = parse_args()
+def main(argv: list[str] | None = None) -> None:
+    """Main entry point — DI wiring and run.
+
+    Args:
+        argv: Argument list to parse. Defaults to sys.argv[1:].
+    """
+    args = parse_args(argv)
 
     if args.list_devices:
         list_audio_devices()

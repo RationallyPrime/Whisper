@@ -153,11 +153,15 @@ def _do_clipboard(subcommand: str | None, wait: bool) -> int:
     return _handle_wait(cmd_id, wait)
 
 
-def _do_daemon() -> int:
-    """Start the RT-Whisper daemon (delegates to __main__.main)."""
+def _do_daemon(daemon_argv: list[str]) -> int:
+    """Start the RT-Whisper daemon (delegates to __main__.main).
+
+    Args:
+        daemon_argv: Arguments to forward to the daemon (e.g. --device, --model).
+    """
     from .__main__ import main as daemon_main
 
-    daemon_main()
+    daemon_main(daemon_argv)
     return 0
 
 
@@ -224,7 +228,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> None:
     """Entry point for rtwhisperctl."""
     parser = build_parser()
-    args = parser.parse_args(argv)
+    # parse_known_args so daemon can forward extra flags (--device, --model, etc.)
+    args, remaining = parser.parse_known_args(argv)
 
     if args.command == "start":
         code = _do_start(args.wait)
@@ -237,7 +242,7 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "clipboard":
         code = _do_clipboard(args.subcommand, args.wait)
     elif args.command == "daemon":
-        code = _do_daemon()
+        code = _do_daemon(remaining)
     else:
         parser.print_help()
         code = 1
