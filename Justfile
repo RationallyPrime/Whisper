@@ -3,8 +3,10 @@ default:
 
 # Start the RT-Whisper daemon in the background
 start *ARGS:
+    #!/usr/bin/env bash
+    mkdir -p ~/.whisper_logs
     nohup uv run rtwhisperctl daemon {{ARGS}} > ~/.whisper_logs/rt_whisper_stdout.log 2>&1 &
-    @echo "Daemon started (PID: $!). Logs: ~/.whisper_logs/"
+    echo "Daemon started (PID: $!). Logs: ~/.whisper_logs/"
 
 # Stop recording (if active)
 stop:
